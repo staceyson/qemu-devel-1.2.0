@@ -31,6 +31,7 @@
 #include <sys/syscall.h>
 #include <sys/param.h>
 #include <sys/sysctl.h>
+#include <sys/event.h>
 #include <utime.h>
 
 #include "qemu.h"
@@ -327,6 +328,54 @@ static abi_long unlock_iovec(struct iovec *vec, abi_ulong target_addr,
     return 0;
 }
 
+static inline abi_long
+fbsd_copy_from_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
+{
+     struct target_freebsd_timeval *target_tv;
+     if (!lock_user_struct(VERIFY_READ, target_tv, target_tv_addr, 0))
+		return -TARGET_EFAULT;
+   __get_user(tv->tv_sec, &target_tv->tv_sec);
+   __get_user(tv->tv_usec, &target_tv->tv_usec);
+     unlock_user_struct(target_tv, target_tv_addr, 1);
+     return (0);
+}
+
+static inline abi_long
+fbsd_copy_from_user_timespec(struct timespec *ts, abi_ulong target_ts_addr)
+{
+     struct target_freebsd_timespec *target_ts;
+     if (!lock_user_struct(VERIFY_READ, target_ts, target_ts_addr, 0))
+		return -TARGET_EFAULT;
+   __get_user(ts->tv_sec, &target_ts->tv_sec);
+   __get_user(ts->tv_nsec, &target_ts->tv_nsec);
+     unlock_user_struct(target_ts, target_ts_addr, 1);
+     return (0);
+}
+
+static inline abi_long
+fbsd_copy_to_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
+{
+     struct target_freebsd_timeval *target_tv;
+     if (!lock_user_struct(VERIFY_WRITE, target_tv, target_tv_addr, 0))
+		return -TARGET_EFAULT;
+   __put_user(tv->tv_sec, &target_tv->tv_sec);
+   __put_user(tv->tv_usec, &target_tv->tv_usec);
+     unlock_user_struct(target_tv, target_tv_addr, 1);
+     return (0);
+}
+
+static inline abi_long
+fbsd_copy_to_user_timespec(struct timespec *ts, abi_ulong target_ts_addr)
+{
+     struct target_freebsd_timespec *target_ts;
+     if (!lock_user_struct(VERIFY_WRITE, target_ts, target_ts_addr, 0))
+		return -TARGET_EFAULT;
+   __put_user(ts->tv_sec, &target_ts->tv_sec);
+   __put_user(ts->tv_nsec, &target_ts->tv_nsec);
+     unlock_user_struct(target_ts, target_ts_addr, 1);
+     return (0);
+}
+
 /* do_syscall() should always have a single exit point at the end so
    that actions, such as logging of syscall results, can be performed.
    All errnos that do_syscall() returns must be -TARGET_<errcode>. */
@@ -337,6 +386,7 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 {
     abi_long ret;
     void *p;
+    struct stat st;
 
 #ifdef DEBUG
     gemu_log("freebsd syscall %d\n", num);
@@ -413,6 +463,266 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
     case TARGET_FREEBSD_NR___syscall:
         ret = do_freebsd_syscall(cpu_env,arg1 & 0xffff,arg2,arg3,arg4,arg5,arg6,arg7,arg8,0);
         break;
+    case TARGET_FREEBSD_NR_stat:
+	 if (!(p = lock_user_string(arg1)))
+            goto efault;
+        ret = get_errno(stat(path(p), &st));
+        unlock_user(p, arg1, 0);
+        goto do_stat;
+    case TARGET_FREEBSD_NR_lstat:
+        if (!(p = lock_user_string(arg1)))
+            goto efault;
+        ret = get_errno(lstat(path(p), &st));
+        unlock_user(p, arg1, 0);
+        goto do_stat;
+    case TARGET_FREEBSD_NR_fstat:
+        {
+            ret = get_errno(fstat(arg1, &st));
+
+do_stat:
+	if (!is_error(ret)) {
+		struct target_freebsd_stat *target_st;
+		
+		if (!lock_user_struct(VERIFY_WRITE, target_st, arg2, 0))
+                    goto efault;
+                memset(target_st, 0, sizeof(*target_st));
+                __put_user(st.st_dev, &target_st->st_dev);
+                __put_user(st.st_ino, &target_st->st_ino);
+                __put_user(st.st_mode, &target_st->st_mode);
+                __put_user(st.st_uid, &target_st->st_uid);
+                __put_user(st.st_gid, &target_st->st_gid);
+                __put_user(st.st_nlink, &target_st->st_nlink);
+                __put_user(st.st_rdev, &target_st->st_rdev);
+                __put_user(st.st_size, &target_st->st_size);
+                __put_user(st.st_blksize, &target_st->st_blksize);
+                __put_user(st.st_blocks, &target_st->st_blocks);
+                __put_user(st.st_atim.tv_sec, &target_st->st_atim.tv_sec);
+		__put_user(st.st_atim.tv_nsec, &target_st->st_atim.tv_nsec);
+                __put_user(st.st_mtim.tv_sec, &target_st->st_mtim.tv_sec);
+		__put_user(st.st_mtim.tv_nsec, &target_st->st_mtim.tv_nsec);
+                __put_user(st.st_ctim.tv_sec, &target_st->st_ctim.tv_sec);
+		__put_user(st.st_ctim.tv_nsec, &target_st->st_ctim.tv_nsec);
+		__put_user(st.st_rdev, &target_st->st_rdev);
+		__put_user(st.st_flags, &target_st->st_flags);
+		__put_user(st.st_gen, &target_st->st_gen);
+		__put_user(st.st_birthtim.tv_sec, &target_st->st_birthtim.tv_sec);
+		__put_user(st.st_birthtim.tv_nsec, &target_st->st_birthtim.tv_nsec);
+                unlock_user_struct(target_st, arg2, 1);
+	  }
+
+        break;
+	}
+    case TARGET_FREEBSD_NR_clock_gettime:
+   { 
+	struct timespec ts;
+	ret = get_errno(clock_gettime(arg1, &ts));
+        if (!is_error(ret)) {
+           if (fbsd_copy_to_user_timespec(&ts, arg2))
+            goto efault;
+        }
+        break;
+    }
+   case TARGET_FREEBSD_NR_clock_getres:
+   { 
+	struct timespec ts;
+	ret = get_errno(clock_getres(arg1, &ts));
+        if (!is_error(ret)) {
+	   if (fbsd_copy_to_user_timespec(&ts, arg2))
+            goto efault;
+        }
+        break;
+    }
+    case TARGET_FREEBSD_NR_clock_settime:
+   { 
+	struct timespec ts;
+        if (fbsd_copy_from_user_timespec(&ts, arg2) != 0)
+          goto efault;
+	ret = get_errno(clock_settime(arg1, &ts));
+        break;
+    }
+     case TARGET_FREEBSD_NR_gettimeofday:
+   { 
+	struct timeval tv;
+	struct timezone tz, *target_tz;
+        if (arg2 != 0) {
+	  if (!lock_user_struct(VERIFY_READ, target_tz, arg2, 0))
+	      goto efault;
+	  __get_user(tz.tz_minuteswest, &target_tz->tz_minuteswest);
+	  __get_user(tz.tz_dsttime, &target_tz->tz_dsttime);
+	    unlock_user_struct(target_tz, arg2, 1);
+        }
+	ret = get_errno(gettimeofday(&tv, arg2 != 0 ? &tz : NULL));
+        if (!is_error(ret)) {
+           if (fbsd_copy_to_user_timeval(&tv, arg1))
+              goto efault;
+	}
+        break;
+    }
+    case TARGET_FREEBSD_NR_settimeofday:
+   { 
+	struct timeval tv;
+        struct timezone tz, *target_tz;
+
+        if (arg2 != 0) {
+	  if (!lock_user_struct(VERIFY_READ, target_tz, arg2, 0))
+	      goto efault;
+	  __get_user(tz.tz_minuteswest, &target_tz->tz_minuteswest);
+	  __get_user(tz.tz_dsttime, &target_tz->tz_dsttime);
+	    unlock_user_struct(target_tz, arg2, 1);
+        }
+
+        if (fbsd_copy_from_user_timeval(&tv, arg1))
+           goto efault;
+	ret = get_errno(settimeofday(&tv, arg2 != 0 ? & tz : NULL));
+        break;
+    }
+
+#ifdef __FreeBSD__
+    case TARGET_FREEBSD_NR_kevent:
+        {
+           struct kevent *changelist, *eventlist;
+           struct target_kevent *target_changelist, *target_eventlist;
+           struct timespec ts;
+           int i;
+           
+           if (arg3 != 0) {
+              if (!(target_changelist = lock_user(VERIFY_READ, arg2,
+                  sizeof(struct target_kevent) * arg3, 1)))
+                     goto efault;
+              changelist = alloca(sizeof(struct kevent) * arg3);
+
+              for (i = 0; i < arg3; i++) {
+                 __get_user(changelist[i].ident, &target_changelist[i].ident);
+                 __get_user(changelist[i].filter, &target_changelist[i].filter);
+                 __get_user(changelist[i].flags, &target_changelist[i].flags);
+                 __get_user(changelist[i].fflags, &target_changelist[i].fflags);
+                 __get_user(changelist[i].data, &target_changelist[i].data);
+		/* XXX: This is broken when running a 64bits target on a 32bits host */
+                 __get_user(changelist[i].udata, &target_changelist[i].udata);
+               }
+               unlock_user(target_changelist, arg2, 0);
+           }
+
+           if (arg5 != 0)
+              eventlist = alloca(sizeof(struct kevent) * arg5);
+           if (arg6 != 0)
+              if (fbsd_copy_from_user_timespec(&ts, arg6))
+                goto efault;
+           ret = get_errno(kevent(arg1, changelist, arg3, eventlist, arg5,
+              arg6 != 0 ? &ts : NULL));
+           if (!is_error(ret)) {
+               if (!(target_eventlist = lock_user(VERIFY_WRITE, arg4, 
+                   sizeof(struct target_kevent) * arg5, 0)))
+                      goto efault;
+               for (i = 0; i < arg5; i++) {
+                 __put_user(eventlist[i].ident, &target_eventlist[i].ident);
+                 __put_user(eventlist[i].filter, &target_eventlist[i].filter);
+                 __put_user(eventlist[i].flags, &target_eventlist[i].flags);
+                 __put_user(eventlist[i].fflags, &target_eventlist[i].fflags);
+                 __put_user(eventlist[i].data, &target_eventlist[i].data);
+                 __put_user(eventlist[i].udata, &target_eventlist[i].udata);
+               }
+               unlock_user(target_eventlist, arg4, sizeof(struct target_kevent) * arg5);
+
+              
+           }
+           
+           
+
+           
+        }
+#endif
+    case TARGET_FREEBSD_NR_execve:
+        {
+            char **argp, **envp;
+            int argc, envc;
+            abi_ulong gp;
+            abi_ulong guest_argp;
+            abi_ulong guest_envp;
+            abi_ulong addr;
+            char **q;
+            int total_size = 0;
+
+            argc = 0;
+            guest_argp = arg2;
+            for (gp = guest_argp; gp; gp += sizeof(abi_ulong)) {
+                if (get_user_ual(addr, gp))
+                    goto efault;
+                if (!addr)
+                    break;
+                argc++;
+            }
+            envc = 0;
+            guest_envp = arg3;
+            for (gp = guest_envp; gp; gp += sizeof(abi_ulong)) {
+                if (get_user_ual(addr, gp))
+                    goto efault;
+                if (!addr)
+                    break;
+                envc++;
+            }
+
+            argp = alloca((argc + 1) * sizeof(void *));
+            envp = alloca((envc + 1) * sizeof(void *));
+
+            for (gp = guest_argp, q = argp; gp;
+                  gp += sizeof(abi_ulong), q++) {
+                if (get_user_ual(addr, gp))
+                    goto execve_efault;
+                if (!addr)
+                    break;
+                if (!(*q = lock_user_string(addr)))
+                    goto execve_efault;
+                total_size += strlen(*q) + 1;
+            }
+            *q = NULL;
+
+            for (gp = guest_envp, q = envp; gp;
+                  gp += sizeof(abi_ulong), q++) {
+                if (get_user_ual(addr, gp))
+                    goto execve_efault;
+                if (!addr)
+                    break;
+                if (!(*q = lock_user_string(addr)))
+                    goto execve_efault;
+                total_size += strlen(*q) + 1;
+            }
+            *q = NULL;
+
+            /* This case will not be caught by the host's execve() if its
+               page size is bigger than the target's. */
+            if (total_size > MAX_ARG_PAGES * TARGET_PAGE_SIZE) {
+                ret = -TARGET_E2BIG;
+                goto execve_end;
+            }
+            if (!(p = lock_user_string(arg1)))
+                goto execve_efault;
+            ret = get_errno(execve(p, argp, envp));
+            unlock_user(p, arg1, 0);
+
+            goto execve_end;
+
+        execve_efault:
+            ret = -TARGET_EFAULT;
+
+        execve_end:
+            for (gp = guest_argp, q = argp; *q;
+                  gp += sizeof(abi_ulong), q++) {
+                if (get_user_ual(addr, gp)
+                    || !addr)
+                    break;
+                unlock_user(*q, addr, 0);
+            }
+            for (gp = guest_envp, q = envp; *q;
+                  gp += sizeof(abi_ulong), q++) {
+                if (get_user_ual(addr, gp)
+                    || !addr)
+                    break;
+                unlock_user(*q, addr, 0);
+            }
+        }
+        break;
+
     default:
         ret = get_errno(syscall(num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8));
         break;

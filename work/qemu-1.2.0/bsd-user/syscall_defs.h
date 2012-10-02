@@ -112,3 +112,62 @@ struct target_iovec {
     abi_long iov_len;   /* Number of bytes */
 };
 
+struct target_kevent {
+    abi_ulong  ident;
+    short      filter;
+    u_short    flags;
+    u_int      fflags;
+    abi_long   data;
+    abi_ulong  udata;
+} __packed;
+
+/*
+ * FreeBSD/arm uses a 64bits time_t, even in 32bits mode, so we have to
+ * add a special case here.
+ */
+#if defined(TARGET_ARM)
+typedef uint64_t target_freebsd_time_t;
+#else
+typedef long target_freebsd_time_t;
+#endif
+
+struct target_freebsd_timespec {
+	target_freebsd_time_t	tv_sec;		/* seconds */
+	abi_long		tv_nsec;	/* and nanoseconds */
+} __packed;
+
+struct target_freebsd_timeval {
+	target_freebsd_time_t	tv_sec;
+	abi_long		tv_usec;
+} __packed;
+
+struct target_freebsd_stat {
+	uint32_t  st_dev;		/* inode's device */
+	uint32_t  st_ino;		/* inode's number */
+	int16_t	  st_mode;		/* inode protection mode */
+	int16_t	  st_nlink;		/* number of hard links */
+	uint32_t  st_uid;		/* user ID of the file's owner */
+	uint32_t  st_gid;		/* group ID of the file's group */
+	uint32_t  st_rdev;		/* device type */
+	struct	target_freebsd_timespec st_atim;	/* time of last access */
+	struct	target_freebsd_timespec st_mtim;	/* time of last data modification */
+	struct	target_freebsd_timespec st_ctim;	/* time of last file status change */
+	int64_t	  st_size;		/* file size, in bytes */
+	int64_t st_blocks;		/* blocks allocated for file */
+	uint32_t st_blksize;		/* optimal blocksize for I/O */
+	uint32_t  st_flags;		/* user defined flags for file */
+	__uint32_t st_gen;		/* file generation number */
+	__int32_t st_lspare;
+	struct target_freebsd_timespec st_birthtim;	/* time of file creation */
+	/*
+	 * Explicitly pad st_birthtim to 16 bytes so that the size of
+	 * struct stat is backwards compatible.  We use bitfields instead
+	 * of an array of chars so that this doesn't require a C99 compiler
+	 * to compile if the size of the padding is 0.  We use 2 bitfields
+	 * to cover up to 64 bits on 32-bit machines.  We assume that
+	 * CHAR_BIT is 8...
+	 */
+	unsigned int :(8 / 2) * (16 - (int)sizeof(struct timespec));
+	unsigned int :(8 / 2) * (16 - (int)sizeof(struct timespec));
+} __packed;
+
