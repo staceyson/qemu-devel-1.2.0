@@ -9,7 +9,7 @@ $(call set-vpath, $(SRC_PATH)/pc-bios/optionrom)
 
 .PHONY : all clean build-all
 
-CFLAGS := -Wall -Wstrict-prototypes -Werror -fomit-frame-pointer -fno-builtin
+CFLAGS := -Wall -Wstrict-prototypes -Werror -fomit-frame-pointer -fno-builtin 
 CFLAGS += -I$(SRC_PATH)
 CFLAGS += $(call cc-option, $(CFLAGS), -fno-stack-protector)
 QEMU_CFLAGS = $(CFLAGS)

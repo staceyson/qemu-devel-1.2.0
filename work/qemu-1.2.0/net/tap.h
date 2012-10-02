@@ -29,8 +29,8 @@
 #include "qemu-common.h"
 #include "qapi-types.h"
 
-#define DEFAULT_NETWORK_SCRIPT "/etc/qemu-ifup"
-#define DEFAULT_NETWORK_DOWN_SCRIPT "/etc/qemu-ifdown"
+#define DEFAULT_NETWORK_SCRIPT PREFIX "/etc/qemu-ifup"
+#define DEFAULT_NETWORK_DOWN_SCRIPT PREFIX "/etc/qemu-ifdown"
 
 int net_init_tap(const NetClientOptions *opts, const char *name,
                  NetClientState *peer);

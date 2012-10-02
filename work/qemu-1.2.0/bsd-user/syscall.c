@@ -96,6 +96,11 @@ static abi_long do_obreak(abi_ulong new_brk)
     return 0;
 }
 
+abi_long do_brk(abi_ulong new_brk)
+{
+    return do_obreak(new_brk);
+}
+
 #if defined(TARGET_I386)
 static abi_long do_freebsd_sysarch(CPUX86State *env, int op, abi_ulong parms)
 {
@@ -157,6 +162,12 @@ static abi_long do_freebsd_sysarch(void *env, int op, abi_ulong parms)
 }
 #endif
 
+#ifdef TARGET_ARM
+static abi_long do_freebsd_sysarch(void *env, int op, abi_ulong parms)
+{
+    return -TARGET_EINVAL;
+}
+#endif
 #ifdef __FreeBSD__
 /*
  * XXX this uses the undocumented oidfmt interface to find the kind of
@@ -211,7 +222,12 @@ static int sysctl_oldcvt(void *holdp, size_t holdlen, uint32_t kind)
         *(uint64_t *)holdp = tswap64(*(unsigned long *)holdp);
         break;
 #endif
+#if !defined(__FreeBSD_version) || __FreeBSD_version < 900031
     case CTLTYPE_QUAD:
+#else
+    case CTLTYPE_U64:
+    case CTLTYPE_S64:
+#endif
         *(uint64_t *)holdp = tswap64(*(uint64_t *)holdp);
         break;
     case CTLTYPE_STRING:
@@ -375,6 +391,9 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
                                     target_to_host_bitmask(arg4, mmap_flags_tbl),
                                     arg5,
                                     arg6));
+        break;
+    case TARGET_FREEBSD_NR_munmap:
+        ret = get_errno(target_munmap(arg1, arg2));
         break;
     case TARGET_FREEBSD_NR_mprotect:
         ret = get_errno(target_mprotect(arg1, arg2, arg3));

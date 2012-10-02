@@ -251,7 +251,8 @@ static void pic_ioport_write(void *opaque, target_phys_addr_t addr64,
             s->init4 = val & 1;
             s->single_mode = val & 2;
             if (val & 0x08) {
-                hw_error("level sensitive irq not supported");
+                /* hw_error("level sensitive irq not supported"); */
+                return;
             }
         } else if (val & 0x08) {
             if (val & 0x04) {

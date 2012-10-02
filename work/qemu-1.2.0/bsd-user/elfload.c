@@ -190,6 +190,9 @@ static inline void init_thread(struct target_pt_regs *regs, struct image_info *i
     if (infop->entry & 1)
       regs->ARM_cpsr |= CPSR_T;
     regs->ARM_pc = infop->entry & 0xfffffffe;
+    if (bsd_type == target_freebsd) {
+      regs->ARM_lr = infop->entry & 0xfffffffe;
+    }
     regs->ARM_sp = infop->start_stack;
     /* FIXME - what to for failure of get_user()? */
     get_user_ual(regs->ARM_r2, stack + 8); /* envp */
