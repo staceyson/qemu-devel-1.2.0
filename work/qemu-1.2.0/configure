@@ -1018,6 +1018,7 @@ x86_64-bsd-user \
 sparc-bsd-user \
 sparc64-bsd-user \
 arm-bsd-user \
+armeb-bsd-user \
 "
 fi
 

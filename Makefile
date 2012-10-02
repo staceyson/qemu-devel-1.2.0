@@ -65,7 +65,7 @@ CLANG_CFLAGS_AS+=	-no-integrated-as
 
 .if ${PORT_OPTIONS:MX86_TARGETS}
 .if ${PORT_OPTIONS:MBSD_USER}
-CONFIGURE_ARGS+=	--target-list=i386-softmmu,x86_64-softmmu,i386-bsd-user,x86_64-bsd-user,sparc-bsd-user,sparc64-bsd-user,arm-bsd-user
+CONFIGURE_ARGS+=	--target-list=i386-softmmu,x86_64-softmmu,i386-bsd-user,x86_64-bsd-user,sparc-bsd-user,sparc64-bsd-user,arm-bsd-user,armeb-bsd-user
 .else
 CONFIGURE_ARGS+=	--target-list=i386-softmmu,x86_64-softmmu
 .endif
