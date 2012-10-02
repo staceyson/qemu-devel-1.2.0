@@ -169,6 +169,14 @@ static abi_long do_freebsd_sysarch(void *env, int op, abi_ulong parms)
     return -TARGET_EINVAL;
 }
 #endif
+
+#ifdef TARGET_MIPS
+static abi_long do_freebsd_sysarch(void *env, int op, abi_ulong parms)
+{
+    return -TARGET_EINVAL;
+}
+#endif
+
 #ifdef __FreeBSD__
 /*
  * XXX this uses the undocumented oidfmt interface to find the kind of

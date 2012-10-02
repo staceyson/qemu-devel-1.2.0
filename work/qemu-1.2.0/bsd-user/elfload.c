@@ -378,13 +378,14 @@ static inline void init_thread(struct target_pt_regs *_regs, struct image_info *
 
 #ifdef TARGET_MIPS
 
-#define ELF_START_MMAP 0x80000000
 
 #define elf_check_arch(x) ( (x) == EM_MIPS )
 
-#ifdef TARGET_MIPS64
+#if defined(TARGET_MIPS64)
+#define ELF_START_MMAP 0x2aaaaab000ULL
 #define ELF_CLASS   ELFCLASS64
 #else
+#define ELF_START_MMAP 0x80000000
 #define ELF_CLASS   ELFCLASS32
 #endif
 #ifdef TARGET_WORDS_BIGENDIAN
@@ -396,9 +397,10 @@ static inline void init_thread(struct target_pt_regs *_regs, struct image_info *
 
 static inline void init_thread(struct target_pt_regs *regs, struct image_info *infop)
 {
+
     regs->cp0_status = 2 << CP0St_KSU;
-    regs->cp0_epc = infop->entry;
-    regs->regs[29] = infop->start_stack;
+    regs->regs[25] = regs->cp0_epc = infop->entry;	 /* t9 = pc = entry */
+    regs->regs[4] = regs->regs[29] = infop->start_stack; /* a0 = sp = start_stack */
 }
 
 #define USE_ELF_CORE_DUMP
@@ -576,30 +578,38 @@ static void bswap_ehdr(struct elfhdr *ehdr)
     bswap16s(&ehdr->e_shstrndx);                /* Section header string table index */
 }
 
-static void bswap_phdr(struct elf_phdr *phdr)
+static void bswap_phdr(struct elf_phdr *phdr, int phnum)
 {
-    bswap32s(&phdr->p_type);                    /* Segment type */
-    bswaptls(&phdr->p_offset);          /* Segment file offset */
-    bswaptls(&phdr->p_vaddr);           /* Segment virtual address */
-    bswaptls(&phdr->p_paddr);           /* Segment physical address */
-    bswaptls(&phdr->p_filesz);          /* Segment size in file */
-    bswaptls(&phdr->p_memsz);           /* Segment size in memory */
-    bswap32s(&phdr->p_flags);           /* Segment flags */
-    bswaptls(&phdr->p_align);           /* Segment alignment */
+    int i;
+
+    for (i = 0; i < phnum; ++i, ++phdr) {
+	bswap32s(&phdr->p_type);	/* Segment type */
+	bswap32s(&phdr->p_flags);	/* Segment flags */
+	bswaptls(&phdr->p_offset);	/* Segment file offset */
+	bswaptls(&phdr->p_vaddr);	/* Segment virtual address */
+	bswaptls(&phdr->p_paddr);	/* Segment physical address */
+	bswaptls(&phdr->p_filesz);	/* Segment size in file */
+	bswaptls(&phdr->p_memsz);	/* Segment size in memory */
+	bswaptls(&phdr->p_align);	/* Segment alignment */
+    }
 }
 
-static void bswap_shdr(struct elf_shdr *shdr)
+static void bswap_shdr(struct elf_shdr *shdr, int shnum)
 {
-    bswap32s(&shdr->sh_name);
-    bswap32s(&shdr->sh_type);
-    bswaptls(&shdr->sh_flags);
-    bswaptls(&shdr->sh_addr);
-    bswaptls(&shdr->sh_offset);
-    bswaptls(&shdr->sh_size);
-    bswap32s(&shdr->sh_link);
-    bswap32s(&shdr->sh_info);
-    bswaptls(&shdr->sh_addralign);
-    bswaptls(&shdr->sh_entsize);
+    int i;
+
+    for (i = 0; i < shnum; ++i, ++shdr) {
+	bswap32s(&shdr->sh_name);
+	bswap32s(&shdr->sh_type);
+	bswaptls(&shdr->sh_flags);
+	bswaptls(&shdr->sh_addr);
+	bswaptls(&shdr->sh_offset);
+	bswaptls(&shdr->sh_size);
+	bswap32s(&shdr->sh_link);
+	bswap32s(&shdr->sh_info);
+	bswaptls(&shdr->sh_addralign);
+	bswaptls(&shdr->sh_entsize);
+    }
 }
 
 static void bswap_sym(struct elf_sym *sym)
@@ -609,7 +619,14 @@ static void bswap_sym(struct elf_sym *sym)
     bswaptls(&sym->st_size);
     bswap16s(&sym->st_shndx);
 }
-#endif
+
+#else /* ! BSWAP_NEEDED */
+
+static inline void bswap_ehdr(struct elfhdr *ehdr) { }
+static inline void bswap_phdr(struct elf_phdr *phdr, int phnum) { }
+static inline void bswap_shdr(struct elf_shdr *shdr, int shnum) { }
+static inline void bswap_sym(struct elf_sym *sym) { }
+#endif /* ! BSWAP_NEEDED */
 
 /*
  * 'copy_elf_strings()' copies argument/envelope strings from user
@@ -666,7 +683,7 @@ static abi_ulong copy_elf_strings(int argc,char ** argv, void **page,
     return p;
 }
 
-static abi_ulong setup_arg_pages(abi_ulong p, struct linux_binprm *bprm,
+static abi_ulong setup_arg_pages(abi_ulong p, struct bsd_binprm *bprm,
                                  struct image_info *info)
 {
     abi_ulong stack_base, size, error;
@@ -856,9 +873,7 @@ static abi_ulong load_elf_interp(struct elfhdr * interp_elf_ex,
         last_bss = 0;
         error = 0;
 
-#ifdef BSWAP_NEEDED
         bswap_ehdr(interp_elf_ex);
-#endif
         /* First of all, some simple consistency checks */
         if ((interp_elf_ex->e_type != ET_EXEC &&
              interp_elf_ex->e_type != ET_DYN) ||
@@ -899,12 +914,7 @@ static abi_ulong load_elf_interp(struct elfhdr * interp_elf_ex,
                 free (elf_phdata);
                 return retval;
         }
-#ifdef BSWAP_NEEDED
-        eppnt = elf_phdata;
-        for (i=0; i<interp_elf_ex->e_phnum; i++, eppnt++) {
-            bswap_phdr(eppnt);
-        }
-#endif
+	bswap_phdr(elf_phdata, interp_elf_ex->e_phnum);
 
         if (interp_elf_ex->e_type == ET_DYN) {
             /* in order to avoid hardcoding the interpreter load
@@ -1049,9 +1059,7 @@ static void load_symbols(struct elfhdr *hdr, int fd)
     for (i = 0; i < hdr->e_shnum; i++) {
         if (read(fd, &sechdr, sizeof(sechdr)) != sizeof(sechdr))
             return;
-#ifdef BSWAP_NEEDED
-        bswap_shdr(&sechdr);
-#endif
+	bswap_shdr(&sechdr, 1);
         if (sechdr.sh_type == SHT_SYMTAB) {
             symtab = sechdr;
             lseek(fd, hdr->e_shoff
@@ -1059,9 +1067,7 @@ static void load_symbols(struct elfhdr *hdr, int fd)
             if (read(fd, &strtab, sizeof(strtab))
                 != sizeof(strtab))
                 return;
-#ifdef BSWAP_NEEDED
-            bswap_shdr(&strtab);
-#endif
+	    bswap_shdr(&strtab, 1);
             goto found;
         }
     }
@@ -1094,9 +1100,7 @@ static void load_symbols(struct elfhdr *hdr, int fd)
 
     i = 0;
     while (i < nsyms) {
-#ifdef BSWAP_NEEDED
         bswap_sym(syms + i);
-#endif
         // Throw away entries which we do not need.
         if (syms[i].st_shndx == SHN_UNDEF ||
                 syms[i].st_shndx >= SHN_LORESERVE ||
@@ -1148,7 +1152,7 @@ static void load_symbols(struct elfhdr *hdr, int fd)
     syminfos = s;
 }
 
-int load_elf_binary(struct linux_binprm * bprm, struct target_pt_regs * regs,
+int load_elf_binary(struct bsd_binprm * bprm, struct target_pt_regs * regs,
                     struct image_info * info)
 {
     struct elfhdr elf_ex;
@@ -1178,9 +1182,7 @@ int load_elf_binary(struct linux_binprm * bprm, struct target_pt_regs * regs,
     load_addr = 0;
     load_bias = 0;
     elf_ex = *((struct elfhdr *) bprm->buf);          /* exec-header */
-#ifdef BSWAP_NEEDED
     bswap_ehdr(&elf_ex);
-#endif
 
     /* First of all, some simple consistency checks */
     if ((elf_ex.e_type != ET_EXEC && elf_ex.e_type != ET_DYN) ||
@@ -1214,12 +1216,7 @@ int load_elf_binary(struct linux_binprm * bprm, struct target_pt_regs * regs,
         return -errno;
     }
 
-#ifdef BSWAP_NEEDED
-    elf_ppnt = elf_phdata;
-    for (i=0; i<elf_ex.e_phnum; i++, elf_ppnt++) {
-        bswap_phdr(elf_ppnt);
-    }
-#endif
+    bswap_phdr(elf_phdata, elf_ex.e_phnum);
     elf_ppnt = elf_phdata;
 
     elf_bss = 0;
@@ -1229,9 +1226,9 @@ int load_elf_binary(struct linux_binprm * bprm, struct target_pt_regs * regs,
     elf_stack = ~((abi_ulong)0UL);
     elf_interpreter = NULL;
     start_code = ~((abi_ulong)0UL);
-    end_code = 0;
-    start_data = 0;
-    end_data = 0;
+    end_code = (abi_ulong)0UL;
+    start_data = (abi_ulong)0UL;
+    end_data = (abi_ulong)0UL;
     interp_ex.a_info = 0;
 
     for(i=0;i < elf_ex.e_phnum; i++) {
@@ -1431,7 +1428,7 @@ int load_elf_binary(struct linux_binprm * bprm, struct target_pt_regs * regs,
                 perror("mmap");
                 exit(-1);
             }
-            load_bias = TARGET_ELF_PAGESTART(error - elf_ppnt->p_vaddr);
+	    load_bias = TARGET_ELF_PAGESTART(error - elf_ppnt->p_vaddr);
         }
 
         error = target_mmap(TARGET_ELF_PAGESTART(load_bias + elf_ppnt->p_vaddr),
@@ -1541,12 +1538,13 @@ int load_elf_binary(struct linux_binprm * bprm, struct target_pt_regs * regs,
     padzero(elf_bss, elf_brk);
 
 #if 0
-    printf("(start_brk) %x\n" , info->start_brk);
-    printf("(end_code) %x\n" , info->end_code);
-    printf("(start_code) %x\n" , info->start_code);
-    printf("(end_data) %x\n" , info->end_data);
-    printf("(start_stack) %x\n" , info->start_stack);
-    printf("(brk) %x\n" , info->brk);
+    printf("(start_brk) 0x" TARGET_FMT_lx "\n" , info->start_brk);
+    printf("(end_code) 0x" TARGET_FMT_lx "\n" , info->end_code);
+    printf("(start_code) 0x" TARGET_FMT_lx "\n" , info->start_code);
+    printf("(start_data) 0x" TARGET_FMT_lx "\n" , info->start_data);
+    printf("(end_data) 0x" TARGET_FMT_lx "\n" , info->end_data);
+    printf("(start_stack) 0x" TARGET_FMT_lx "\n" , info->start_stack);
+    printf("(brk) 0x" TARGET_FMT_lx "\n" , info->brk);
 #endif
 
     if ( info->personality == PER_SVR4 )
@@ -1560,6 +1558,11 @@ int load_elf_binary(struct linux_binprm * bprm, struct target_pt_regs * regs,
     }
 
     info->entry = elf_entry;
+
+#ifdef USE_ELF_CORE_DUMP
+    /* bprm->core_dump = &elf_core_dump; */
+    bprm->core_dump = NULL;
+#endif
 
     return 0;
 }

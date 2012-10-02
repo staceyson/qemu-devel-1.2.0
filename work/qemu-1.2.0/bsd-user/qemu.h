@@ -61,7 +61,7 @@ struct image_info {
 
 struct sigqueue {
     struct sigqueue *next;
-    //target_siginfo_t info;
+    target_siginfo_t info;
 };
 
 struct emulated_sigtable {
@@ -88,6 +88,7 @@ typedef struct TaskState {
     uint32_t stack_base;
 #endif
     struct image_info *info;
+    struct bsd_binprm *bprm;
 
     struct emulated_sigtable sigtab[TARGET_NSIG];
     struct sigqueue sigqueue_table[MAX_SIGQUEUE_SIZE]; /* siginfo queue */
@@ -98,6 +99,8 @@ typedef struct TaskState {
 } __attribute__((aligned(16))) TaskState;
 
 void init_task_state(TaskState *ts);
+void task_settid(TaskState *);
+void stop_all_tasks(void);
 extern const char *qemu_uname_release;
 #if defined(CONFIG_USE_GUEST_BASE)
 extern unsigned long mmap_min_addr;
@@ -115,7 +118,7 @@ extern unsigned long mmap_min_addr;
  * This structure is used to hold the arguments that are
  * used when loading binaries.
  */
-struct linux_binprm {
+struct bsd_binprm {
         char buf[128];
         void *page[MAX_ARG_PAGES];
         abi_ulong p;
@@ -125,17 +128,19 @@ struct linux_binprm {
         char **argv;
         char **envp;
         char * filename;        /* Name of binary */
+	int (*core_dump)(int, const CPUArchState *); /* coredump routine */
 };
 
 void do_init_thread(struct target_pt_regs *regs, struct image_info *infop);
 abi_ulong loader_build_argptr(int envc, int argc, abi_ulong sp,
                               abi_ulong stringp, int push_ptr);
 int loader_exec(const char * filename, char ** argv, char ** envp,
-             struct target_pt_regs * regs, struct image_info *infop);
+             struct target_pt_regs * regs, struct image_info *infop,
+	     struct bsd_binprm *);
 
-int load_elf_binary(struct linux_binprm * bprm, struct target_pt_regs * regs,
+int load_elf_binary(struct bsd_binprm * bprm, struct target_pt_regs * regs,
                     struct image_info * info);
-int load_flt_binary(struct linux_binprm * bprm, struct target_pt_regs * regs,
+int load_flt_binary(struct bsd_binprm * bprm, struct target_pt_regs * regs,
                     struct image_info * info);
 
 abi_long memcpy_to_target(abi_ulong dest, const void *src,
@@ -184,9 +189,9 @@ extern int do_strace;
 /* signal.c */
 void process_pending_signals(CPUArchState *cpu_env);
 void signal_init(void);
-//int queue_signal(CPUArchState *env, int sig, target_siginfo_t *info);
-//void host_to_target_siginfo(target_siginfo_t *tinfo, const siginfo_t *info);
-//void target_to_host_siginfo(siginfo_t *info, const target_siginfo_t *tinfo);
+int queue_signal(CPUArchState *env, int sig, target_siginfo_t *info);
+void host_to_target_siginfo(target_siginfo_t *tinfo, const siginfo_t *info);
+void target_to_host_siginfo(siginfo_t *info, const target_siginfo_t *tinfo);
 long do_sigreturn(CPUArchState *env);
 long do_rt_sigreturn(CPUArchState *env);
 abi_long do_sigaltstack(abi_ulong uss_addr, abi_ulong uoss_addr, abi_ulong sp);

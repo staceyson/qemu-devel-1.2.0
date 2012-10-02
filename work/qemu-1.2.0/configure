@@ -1019,6 +1019,9 @@ sparc-bsd-user \
 sparc64-bsd-user \
 arm-bsd-user \
 armeb-bsd-user \
+mips-bsd-user \
+mipsel-bsd-user \
+mips64-bsd-user \
 "
 fi
 

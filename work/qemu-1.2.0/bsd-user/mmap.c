@@ -493,7 +493,7 @@ int target_munmap(abi_ulong start, abi_ulong len)
     int prot, ret;
 
 #ifdef DEBUG_MMAP
-    printf("munmap: start=0x%lx len=0x%lx\n", start, len);
+    printf("munmap: start=0x" TARGET_FMT_lx " len=0x" TARGET_FMT_lx "\n", start, len);
 #endif
     if (start & ~TARGET_PAGE_MASK)
         return -EINVAL;

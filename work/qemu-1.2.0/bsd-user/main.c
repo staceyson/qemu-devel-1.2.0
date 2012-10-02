@@ -642,6 +642,244 @@ void cpu_loop(CPUARMState *env)
 
 #endif
 
+#if defined(TARGET_MIPS) || defined(TARGET_MIPS64)
+
+/*
+ * From sys/mips/mips/trap.c syscalls have the following stored away in the
+ * registers:
+ *
+ * v0(2): if either SYS___syscall (198) or SYS_syscall (0) then indirect syscall
+ * 	  otherwise it is a direct syscall.
+ *
+ * If direct syscall:
+ *
+ * MIPS		MIPS64
+ * v0(2):	v0(2)		syscall #
+ * a0(4):	a0(4)		arg0
+ * a1(5):	a1(5)		arg1
+ * a2(6):	a2(6)		arg2
+ * a3(7):	a3(7)		arg3
+ * t4(12):	a4(8)		arg4
+ * t5(13):	a5(9)		arg5
+ * t6(14):	a6(10)		arg6
+ * t7(15):	a7(11)		arg7
+ *
+ * If indirect syscall:
+ *
+ * MIPS		MIPS64
+ * a0(4):	a0(4)		syscall #
+ * a1(5):	a1(5)		arg0
+ * a2(6):	a2(6)		arg1
+ * a3(7):	a3(7)		arg2
+ * t4(12):	a4(8)		arg3
+ * t5(13):	a5(9)		arg4
+ * t6(14):	a6(10)		arg5
+ * t7(15):	a7(11)		arg6
+ *
+ */
+
+#include <sys/syscall.h>	/* For SYS_[__]syscall, SYS_MAXSYSCALL */
+
+static int do_store_exclusive(CPUMIPSState *env)
+{
+	target_ulong addr;
+	target_ulong page_addr;
+	target_ulong val;
+	int flags;
+	int segv = 0;
+	int reg;
+	int d;
+
+	addr = env->lladdr;
+	page_addr = addr & TARGET_PAGE_MASK;
+	start_exclusive();
+	mmap_lock();
+	flags = page_get_flags(page_addr);
+	if ((flags & PAGE_READ) == 0) {
+		segv = 1;
+	} else {
+		reg = env->llreg & 0x1f;
+		d = (env->llreg & 0x20) != 0;
+		if (d) {
+			segv = get_user_s64(val, addr);
+		} else {
+			segv = get_user_s32(val, addr);
+		}
+		if (!segv) {
+			if (val != env->llval) {
+				env->active_tc.gpr[reg] = 0;
+			} else {
+				if (d) {
+					segv =
+					    put_user_u64(env->llnewval, addr);
+				} else {
+					segv =
+					    put_user_u32(env->llnewval, addr);
+				}
+				if (!segv) {
+					env->active_tc.gpr[reg] = 1;
+				}
+			}
+		}
+	}
+	env->lladdr = -1;
+	if (!segv) {
+		env->active_tc.PC += 4;
+	}
+	mmap_unlock();
+	end_exclusive();
+	return (segv);
+}
+
+void cpu_loop(CPUMIPSState *env)
+{
+	target_siginfo_t info;
+	int trapnr;
+	abi_long ret;
+	unsigned int syscall_num;
+
+	for(;;) {
+		cpu_exec_start(env);
+		trapnr = cpu_mips_exec(env);
+		cpu_exec_end(env);
+		switch(trapnr) {
+		case EXCP_SYSCALL: /* syscall exception */
+			syscall_num = env->active_tc.gpr[2]; /* v0 */
+			env->active_tc.PC += 4;
+			if (syscall_num >= SYS_MAXSYSCALL) {
+				ret = -TARGET_ENOSYS;
+			} else {
+				if (SYS_syscall == syscall_num ||
+				    SYS___syscall == syscall_num) {
+#if defined(TARGET_MIPS64)
+					ret = do_freebsd_syscall(env,
+					    env->active_tc.gpr[4],/* syscall #*/
+					    env->active_tc.gpr[5], /* arg0 */
+					    env->active_tc.gpr[6], /* arg1 */
+					    env->active_tc.gpr[7], /* arg2 */
+					    env->active_tc.gpr[8], /* arg3 */
+					    env->active_tc.gpr[9], /* arg4 */
+					    env->active_tc.gpr[10],/* arg5 */
+					    env->active_tc.gpr[11],/* arg6 */
+					    0 /* no arg 7 */);
+				} else {
+					ret = do_freebsd_syscall(env,
+					    syscall_num,
+					    env->active_tc.gpr[4],
+					    env->active_tc.gpr[5],
+					    env->active_tc.gpr[6],
+					    env->active_tc.gpr[7],
+					    env->active_tc.gpr[8],
+					    env->active_tc.gpr[9],
+					    env->active_tc.gpr[10],
+					    env->active_tc.gpr[11]
+					    );
+
+#else /* ! TARGET_MIPS64 */
+					/* indirect syscall */
+					ret = do_freebsd_syscall(env,
+					    env->active_tc.gpr[4],/* syscall #*/
+					    env->active_tc.gpr[5], /* a1/arg0 */
+					    env->active_tc.gpr[6], /* a2/arg1 */
+					    env->active_tc.gpr[7], /* a3/arg2 */
+					    env->active_tc.gpr[12],/* t4/arg3 */
+					    env->active_tc.gpr[13],/* t5/arg4 */
+					    env->active_tc.gpr[14],/* t6/arg5 */
+					    env->active_tc.gpr[15],/* t7/arg6 */
+					    0 /* no arg7 */ );
+				} else {
+					/* direct syscall */
+					ret = do_freebsd_syscall(env,
+					    syscall_num,
+					    env->active_tc.gpr[4], /* a0/arg0 */
+					    env->active_tc.gpr[5], /* a1/arg1 */
+					    env->active_tc.gpr[6], /* a2/arg2 */
+					    env->active_tc.gpr[7], /* a3/arg3 */
+					    env->active_tc.gpr[12],/* t4/arg4 */
+					    env->active_tc.gpr[13],/* t5/arg5 */
+					    env->active_tc.gpr[14],/* t6/arg6 */
+					    env->active_tc.gpr[15] /* t7/arg7 */
+					    );
+#endif /* ! TARGET_MIPS64 */
+				}
+			}
+/* done_syscall: */
+			if (-TARGET_QEMU_ESIGRETURN == ret) {
+				/*
+				 * Returning from a successful sigreturn
+				 * syscall.  Avoid clobbering register state.
+				 */
+				break;
+			}
+			if ((unsigned int)ret >= (unsigned int)(-1133)) {
+				env->active_tc.gpr[7] = 1;
+				ret = -ret;
+			} else {
+				env->active_tc.gpr[7] = 0;
+			}
+			env->active_tc.gpr[2] = ret; /* v0 <- ret */
+			break;
+
+		case EXCP_TLBL:	/* TLB miss on load */
+		case EXCP_TLBS: /* TLB miss on store */
+		case EXCP_AdEL:	/* bad address on load */
+		case EXCP_AdES: /* bad address on store */
+			info.si_signo = TARGET_SIGSEGV;
+			info.si_errno = 0;
+			/* XXX: check env->error_code */
+			info.si_code = TARGET_SEGV_MAPERR;
+			info._sifields._sigfault._addr = env->CP0_BadVAddr;
+			queue_signal(env, info.si_signo, &info);
+			break;
+
+		case EXCP_CpU: /* coprocessor unusable */
+		case EXCP_RI:  /* reserved instruction */
+			info.si_signo = TARGET_SIGILL;
+			info.si_errno = 0;
+			info.si_code = 0;
+			queue_signal(env, info.si_signo, &info);
+			break;
+
+		case EXCP_INTERRUPT: /* async interrupt */
+			/* just indicate that signals should be handled asap */
+			break;
+
+		case EXCP_DEBUG: /* cpu stopped after a breakpoint */
+			{
+				int sig;
+
+				sig = gdb_handlesig(env, TARGET_SIGTRAP);
+				if (sig) {
+					info.si_signo = sig;
+					info.si_errno = 0;
+					info.si_code = TARGET_TRAP_BRKPT;
+					queue_signal(env, info.si_signo, &info);
+				}
+			}
+			break;
+
+		case EXCP_SC:
+			if (do_store_exclusive(env)) {
+				info.si_signo = TARGET_SIGSEGV;
+				info.si_errno = 0;
+				info.si_code = TARGET_SEGV_MAPERR;
+				info._sifields._sigfault._addr =
+				    env->active_tc.PC;
+				queue_signal(env, info.si_signo, &info);
+			}
+			break;
+
+		default:
+			fprintf(stderr, "qemu: unhandled CPU exception "
+			    "0x%x - aborting\n", trapnr);
+			cpu_dump_state(env, stderr, fprintf, 0);
+			abort();
+		}
+		process_pending_signals(env);
+	}
+}
+#endif /* defined(TARGET_MIPS) */
+
 #ifdef TARGET_SPARC
 #define SPARC64_STACK_BIAS 2047
 
@@ -969,6 +1207,15 @@ static void usage(void)
 
 THREAD CPUArchState *thread_env;
 
+void stop_all_tasks(void)
+{
+	/*
+	 * We trust when using NPTL (pthreads) start_exclusive() handles thread
+	 * stopping correctly.
+	 */
+	start_exclusive();
+}
+
 /* Assumes contents are already zeroed.  */
 void init_task_state(TaskState *ts)
 {
@@ -990,6 +1237,7 @@ int main(int argc, char **argv)
     const char *log_mask = NULL;
     struct target_pt_regs regs1, *regs = &regs1;
     struct image_info info1, *info = &info1;
+    struct bsd_binprm bprm;
     TaskState ts1, *ts = &ts1;
     CPUArchState *env;
     int optind;
@@ -997,7 +1245,11 @@ int main(int argc, char **argv)
     int gdbstub_port = 0;
     char **target_environ, **wrk;
     envlist_t *envlist = NULL;
+#ifdef __FreeBSD__
+    bsd_type = target_freebsd;
+#else
     bsd_type = target_openbsd;
+#endif
 
     if (argc <= 1)
         usage();
@@ -1141,6 +1393,8 @@ int main(int argc, char **argv)
     /* Zero out image_info */
     memset(info, 0, sizeof(struct image_info));
 
+    memset(&bprm, 0, sizeof(bprm));
+
     /* Scan interp_prefix dir for replacement files. */
     init_paths(interp_prefix);
 
@@ -1150,6 +1404,12 @@ int main(int argc, char **argv)
         cpu_model = "qemu64";
 #else
         cpu_model = "qemu32";
+#endif
+#elif defined(TARGET_MIPS) || defined(TARGET_MIPS64)
+#if defined(TARGET_ABI_MIPSN32) || defined(TARGET_ABI_MIPSN64)
+	cpu_model = "20Kc";
+#else
+	cpu_model = "24Kf";
 #endif
 #elif defined(TARGET_SPARC)
 #ifdef TARGET_SPARC64
@@ -1211,7 +1471,8 @@ int main(int argc, char **argv)
     }
 #endif /* CONFIG_USE_GUEST_BASE */
 
-    if (loader_exec(filename, argv+optind, target_environ, regs, info) != 0) {
+    if (loader_exec(filename, argv+optind, target_environ, regs, info,
+	    &bprm)!= 0) {
         printf("Error loading %s\n", filename);
         _exit(1);
     }
@@ -1256,6 +1517,7 @@ int main(int argc, char **argv)
     memset(ts, 0, sizeof(TaskState));
     init_task_state(ts);
     ts->info = info;
+    ts->bprm = &bprm;
     env->opaque = ts;
 
 #if defined(TARGET_I386)
@@ -1393,6 +1655,20 @@ int main(int argc, char **argv)
         for (i = 0; i < 16; i++) {
                 env->regs[i] = regs->uregs[i];
         }
+    }
+#elif defined(TARGET_MIPS)
+    {
+	int i;
+	for(i = 0; i < 32; i++) {
+		env->active_tc.gpr[i] = regs->regs[i];
+	}
+	env->active_tc.PC = regs->cp0_epc & ~(target_ulong)1;
+	if (regs->cp0_epc & 1) {
+		env->hflags |= MIPS_HFLAG_M16;
+	}
+#if defined(TARGET_MIPS64)
+	env->hflags |= MIPS_HFLAG_UX;
+#endif
     }
 #else
 #error unsupported target CPU

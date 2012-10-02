@@ -37,8 +37,6 @@
  *      @(#)signal.h    8.2 (Berkeley) 1/21/94
  */
 
-#define TARGET_NSIG     32              /* counting 0; could be 33 (mask is 1-32) */
-
 #define TARGET_SIGHUP  1       /* hangup */
 #define TARGET_SIGINT  2       /* interrupt */
 #define TARGET_SIGQUIT 3       /* quit */
@@ -71,14 +69,21 @@
 #define TARGET_SIGINFO  29      /* information request */
 #define TARGET_SIGUSR1 30       /* user defined signal 1 */
 #define TARGET_SIGUSR2 31       /* user defined signal 2 */
+#define	TARGET_SIGTHR 32	/* reserved by thread library */
+#define	TARGET_SIGLWP SIGTHR	/* compatibility */
+#define	TARGET_SIGLIBRT 33	/* reserved by the real-time library */
+#define	TARGET_SIGRTMIN 65
+#define	TARGET_SIGRTMAX	126
+#define	TARGET_QEMU_ESIGRETURN	255	/* fake errno value for use by sigreturn */
+
 
 /*
  * Language spec says we must list exactly one parameter, even though we
  * actually supply three.  Ugh!
  */
-#define TARGET_SIG_DFL         (void (*)(int))0
-#define TARGET_SIG_IGN         (void (*)(int))1
-#define TARGET_SIG_ERR         (void (*)(int))-1
+#define	TARGET_SIG_DFL		((abi_long)0)	/* default signal handling */
+#define TARGET_SIG_IGN		((abi_long)1)	/* ignore signal */
+#define	TARGET_SIG_ERR		((abi_long)-1)	/* error return from signal */
 
 #define TARGET_SA_ONSTACK       0x0001  /* take signal on signal stack */
 #define TARGET_SA_RESTART       0x0002  /* restart system on signal return */
@@ -101,6 +106,23 @@
 #define TARGET_SS_ONSTACK       0x0001  /* take signals on alternate stack */
 #define TARGET_SS_DISABLE       0x0004  /* disable taking signals on alternate stack */
 
+/*
+ * si_code values
+ * Digital reserves positive values for kernel-generated signals.
+ */
+
+/*
+ * SIGSEGV si_codes
+ */
+#define TARGET_SEGV_MAPERR	(1)	/* address not mapped to object */
+#define	TARGET_SEGV_ACCERR	(2)	/* invalid permissions for mapped
+					   object */
+/*
+ * SIGTRAP si_codes
+ */
+#define	TARGET_TRAP_BRKPT	(1)	/* process beakpoint */
+#define	TARGET_TRAP_TRACE	(2)	/* process trace trap */
+
 #include "errno_defs.h"
 
 #include "freebsd/syscall_nr.h"
@@ -111,6 +133,120 @@ struct target_iovec {
     abi_long iov_base;   /* Starting address */
     abi_long iov_len;   /* Number of bytes */
 };
+
+typedef abi_long target_clock_t;
+
+#define	TARGET_NSIG		128
+#define	TARGET_NSIG_BPW		TARGET_ABI_BITS
+#define	TARGET_NSIG_WORDS	(TARGET_NSIG / TARGET_NSIG_BPW)
+
+typedef struct {
+	abi_ulong sig[TARGET_NSIG_WORDS];
+} target_sigset_t;
+
+#ifdef BSWAP_NEEDED
+static inline void
+tswap_sigset(target_sigset_t *d, const target_sigset_t *s)
+{
+	int i;
+
+	for(i = 0; i < TARGET_NSIG_WORDS; i++)
+		d->sig[i] = tswapal(s->sig[i]);
+}
+#else
+static inline void
+tswap_sigset(target_sigset_t *d, const target_sigset_t *s)
+{
+	*d = *s;
+}
+#endif
+
+static inline void
+target_siginitset(target_sigset_t *d, abi_ulong set)
+{
+	int i;
+
+	d->sig[0] = set;
+	for(i = 1; i < TARGET_NSIG_WORDS; i++)
+		d->sig[i] = 0;
+}
+
+void host_to_target_sigset(target_sigset_t *d, const sigset_t *s);
+void target_to_host_sigset(sigset_t *d, const target_sigset_t *s);
+void host_to_target_old_sigset(abi_ulong *old_sigset, const sigset_t *sigset);
+void target_to_host_old_sigset(sigset_t *sigset, const abi_ulong *old_sigset);
+struct target_sigaction;
+int do_sigaction(int sig, const struct target_sigaction *act,
+    struct target_sigaction *oact);
+
+
+struct target_sigaction {
+	abi_ulong	 _sa_handler;
+	abi_ulong	sa_flags;
+	target_sigset_t	sa_mask;
+};
+
+typedef union target_sigval {
+	int sival_int;
+	abi_ulong sival_ptr;
+} target_sigval_t;
+
+#define	TARGET_SI_MAX_SIZE	128
+#define TARGET_SI_PAD_SIZE	((TARGET_SI_MAX_SIZE/sizeof(int)) - 3)
+
+typedef struct target_siginfo {
+#ifdef TARGET_MIPS
+	int si_signo;
+	int si_code;
+	int si_errno;
+#else
+	int si_signo;
+	int si_errno;
+	int si_code;
+#endif
+	union {
+		int _pad[TARGET_SI_PAD_SIZE];
+
+		/* kill() */
+		struct {
+			pid_t _pid;	/* sender's pid */
+			uid_t _uid;	/* sender's uid */
+		} _kill;
+
+		/* POSIX.1b timers */
+		struct {
+			unsigned int _timer1;
+			unsigned int _timer2;
+		} _timer;
+
+		/* POSIX.1b signals */
+		struct {
+			pid_t _pid;	/* sender's pid */
+			uid_t _uid;	/* sender's uid */
+			target_sigval_t _sigval;
+		} _rt;
+
+		/* SIGCHLD */
+		struct {
+			pid_t _pid;	/* which child */
+			uid_t _uid;	/* sender's uid */
+			int  _status;	/* exit code */
+			target_clock_t _utime;
+			target_clock_t _stime;
+		} _sigchld;
+
+		/* SIGILL, SIGFPE, SIGSEGV, SIGBUS */
+		struct {
+			abi_ulong _addr; /* faulting insn/memory ref. */
+		} _sigfault;
+
+		/* SIGPOLL */
+		struct {
+			int _band;	/* POLL_IN, POLL_OUT, POLL_MSG */
+			int _fd;
+		} _sigpoll;
+	} _sifields;
+} target_siginfo_t;
 
 struct target_kevent {
     abi_ulong  ident;
