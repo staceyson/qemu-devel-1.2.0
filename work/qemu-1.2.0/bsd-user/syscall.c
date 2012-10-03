@@ -383,6 +383,121 @@ fbsd_copy_to_user_timespec(struct timespec *ts, abi_ulong target_ts_addr)
      unlock_user_struct(target_ts, target_ts_addr, 1);
      return (0);
 }
+static inline abi_ulong
+fbsd_copy_from_user_fdset(fd_set *fds, abi_ulong target_fds_addr, int n)
+{
+	int i, nw, j, k;
+	abi_ulong b, *target_fds;
+
+	nw = (n + TARGET_ABI_BITS - 1) / TARGET_ABI_BITS;
+	if (!(target_fds = lock_user(VERIFY_READ, target_fds_addr,
+		    sizeof(abi_ulong) * nw, 1)))
+		return (-TARGET_EFAULT);
+
+	FD_ZERO(fds);
+	k = 0;
+	for (i = 0; i < nw; i++) {
+		/* grab the abi_ulong */
+		__get_user(b, &target_fds[i]);
+		for (j = 0; j < TARGET_ABI_BITS; j++) {
+			/* check the bit inside the abi_ulong */
+			if ((b >> j) & 1)
+				FD_SET(k, fds);
+			k++;
+		}
+	}
+
+	unlock_user(target_fds, target_fds_addr, 0);
+
+	return (0);
+}
+
+static inline abi_ulong
+fbsd_copy_from_user_fdset_ptr(fd_set *fds, fd_set **fds_ptr,
+    abi_ulong target_fds_addr, int n)
+{
+	if (target_fds_addr) {
+		if (fbsd_copy_from_user_fdset(fds, target_fds_addr, n))
+			return (-TARGET_EFAULT);
+		*fds_ptr = fds;
+	} else {
+		*fds_ptr = NULL;
+	}
+	return (0);
+}
+
+static inline abi_long
+fbsd_copy_to_user_fdset(abi_ulong target_fds_addr, const fd_set *fds, int n)
+{
+	int i, nw, j, k;
+	abi_long v;
+	abi_ulong *target_fds;
+
+	nw = (n + TARGET_ABI_BITS - 1) / TARGET_ABI_BITS;
+	if (!(target_fds = lock_user(VERIFY_WRITE, target_fds_addr,
+		    sizeof(abi_ulong) * nw, 0)))
+		return (-TARGET_EFAULT);
+
+	k = 0;
+	for (i = 0; i < nw; i++) {
+		v = 0;
+		for (j = 0; j < TARGET_ABI_BITS; j++) {
+			v |= ((FD_ISSET(k, fds) != 0) << j);
+			k++;
+		}
+		__put_user(v, &target_fds[i]);
+	}
+
+	unlock_user(target_fds, target_fds_addr, sizeof(abi_ulong) * nw);
+
+	return (0);
+}
+
+/* do_freebsd_select() must return target values and target errnos. */
+static abi_long
+do_freebsd_select(int n, abi_ulong rfd_addr, abi_ulong wfd_addr,
+    abi_ulong efd_addr, abi_ulong target_tv_addr)
+{
+	fd_set rfds, wfds, efds;
+	fd_set *rfds_ptr, *wfds_ptr, *efds_ptr;
+	struct timeval tv, *tv_ptr;
+	abi_long ret;
+
+	if ((ret = fbsd_copy_from_user_fdset_ptr(&rfds, &rfds_ptr, rfd_addr, n))
+	    != 0)
+		return (ret);
+	if ((ret = fbsd_copy_from_user_fdset_ptr(&wfds, &wfds_ptr, wfd_addr, n))
+	    != 0)
+		return (ret);
+	if ((ret = fbsd_copy_from_user_fdset_ptr(&efds, &efds_ptr, efd_addr, n))
+	    != 0)
+		return (ret);
+
+	if (target_tv_addr) {
+		if (fbsd_copy_from_user_timeval(&tv, target_tv_addr))
+			return (-TARGET_EFAULT);
+		tv_ptr = &tv;
+	} else {
+		tv_ptr = NULL;
+	}
+
+	ret = get_errno(select(n, rfds_ptr, wfds_ptr, efds_ptr, tv_ptr));
+
+	if (!is_error(ret)) {
+		if (rfd_addr && fbsd_copy_to_user_fdset(rfd_addr, &rfds, n))
+			return (-TARGET_EFAULT);
+		if (wfd_addr && fbsd_copy_to_user_fdset(wfd_addr, &wfds, n))
+			return (-TARGET_EFAULT);
+		if (efd_addr && fbsd_copy_to_user_fdset(efd_addr, &efds, n))
+			return (-TARGET_EFAULT);
+
+		if (target_tv_addr &&
+		    fbsd_copy_to_user_timeval(&tv, target_tv_addr))
+			return (-TARGET_EFAULT);
+	}
+
+	return (ret);
+}
 
 /* do_syscall() should always have a single exit point at the end so
    that actions, such as logging of syscall results, can be performed.
@@ -588,7 +703,7 @@ do_stat:
 #ifdef __FreeBSD__
     case TARGET_FREEBSD_NR_kevent:
         {
-           struct kevent *changelist, *eventlist;
+           struct kevent *changelist = NULL, *eventlist = NULL;
            struct target_kevent *target_changelist, *target_eventlist;
            struct timespec ts;
            int i;
@@ -606,7 +721,14 @@ do_stat:
                  __get_user(changelist[i].fflags, &target_changelist[i].fflags);
                  __get_user(changelist[i].data, &target_changelist[i].data);
 		/* XXX: This is broken when running a 64bits target on a 32bits host */
-                 __get_user(changelist[i].udata, &target_changelist[i].udata);
+                 /* __get_user(changelist[i].udata, &target_changelist[i].udata); */
+#if TARGET_ABI_BITS == 32
+		 changelist[i].udata = (void *)(uintptr_t)target_changelist[i].udata;
+		 tswap32s((uint32_t *)&changelist[i].udata);
+#else
+		 changelist[i].udata = (void *)(uintptr_t)target_changelist[i].udata;
+		 tswap64s((uint64_t *)&changelist[i].udata);
+#endif
                }
                unlock_user(target_changelist, arg2, 0);
            }
@@ -628,18 +750,23 @@ do_stat:
                  __put_user(eventlist[i].flags, &target_eventlist[i].flags);
                  __put_user(eventlist[i].fflags, &target_eventlist[i].fflags);
                  __put_user(eventlist[i].data, &target_eventlist[i].data);
-                 __put_user(eventlist[i].udata, &target_eventlist[i].udata);
+               /* __put_user(eventlist[i].udata, &target_eventlist[i].udata); */
+#if TARGET_ABI_BITS == 32
+		 tswap32s((uint32_t *)&eventlist[i].data);
+		 target_eventlist[i].data = (uintptr_t)eventlist[i].data;
+#else
+		 tswap64s((uint64_t *)&eventlist[i].data);
+		 target_eventlist[i].data = (uintptr_t)eventlist[i].data;
+#endif
                }
                unlock_user(target_eventlist, arg4, sizeof(struct target_kevent) * arg5);
 
               
            }
-           
-           
-
-           
         }
+	break;
 #endif
+
     case TARGET_FREEBSD_NR_execve:
         {
             char **argp, **envp;
@@ -730,6 +857,56 @@ do_stat:
             }
         }
         break;
+
+    case TARGET_FREEBSD_NR_pipe:
+	{
+		int host_pipe[2];
+		int host_ret = pipe(host_pipe);
+
+		if (!is_error(host_ret)) {
+#if defined(TARGET_ALPHA)
+			((CPUAlphaState *)cpu_env)->ir[IR_A4] =
+			    host_pipe[1];
+#elif defined(TARGET_ARM)
+			((CPUARMState *)cpu_env)->regs[1] =
+			    host_pipe[1];
+#elif defined(TARGET_MIPS)
+			((CPUMIPSState*)cpu_env)->active_tc.gpr[3] =
+			    host_pipe[1];
+#elif defined(TARGET_SH4)
+			((CPUSH4State*)cpu_env)->gregs[1] =
+			    host_pipe[1];
+#else
+#warning Architecture not supported for pipe(2).
+#endif
+			ret = host_pipe[0];
+		} else
+			ret = get_errno(host_ret);
+	}
+	break;
+
+    case TARGET_FREEBSD_NR_lseek:
+	{
+#if defined(TARGET_MIPS) && TARGET_ABI_BITS == 32
+		/* 32-bit MIPS uses two 32 registers for 64 bit arguments */
+		int64_t res = lseek(arg1, ((uint64_t)arg2 << 32) | arg3, arg4);
+
+		if (res == -1) {
+			ret = get_errno(res);
+		} else {
+			ret = res & 0xFFFFFFFF;
+			((CPUMIPSState*)cpu_env)->active_tc.gpr[3] =
+			    (res >> 32) & 0xFFFFFFFF;
+		}
+#else
+		ret = get_errno(lseek(arg1, arg2, arg3));
+#endif
+	}
+	break;
+
+    case TARGET_FREEBSD_NR_select:
+	ret = do_freebsd_select(arg1, arg2, arg3, arg4, arg5);
+	break;
 
     default:
         ret = get_errno(syscall(num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8));
