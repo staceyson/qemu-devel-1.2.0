@@ -1091,6 +1091,85 @@ do_stat:
 	}
 	break;
 
+    case TARGET_FREEBSD_NR_utimes:
+	{
+		struct timeval *tvp, tv[2];
+
+		if (arg2) {
+			if (fbsd_copy_from_user_timeval(&tv[0], arg2)
+			    || fbsd_copy_from_user_timeval(&tv[1],
+				arg2 + sizeof(struct target_timeval)))
+
+				goto efault;
+			tvp = tv;
+		} else {
+			tvp = NULL;
+		}
+		if (!(p = lock_user_string(arg1)))
+			goto efault;
+		ret = get_errno(utimes(p, tvp));
+		unlock_user(p, arg1, 0);
+	}
+	break;
+
+    case TARGET_FREEBSD_NR_lutimes:
+	{
+		struct timeval *tvp, tv[2];
+
+		if (arg2) {
+			if (fbsd_copy_from_user_timeval(&tv[0], arg2)
+			    || fbsd_copy_from_user_timeval(&tv[1],
+				arg2 + sizeof(struct target_timeval)))
+
+				goto efault;
+			tvp = tv;
+		} else {
+			tvp = NULL;
+		}
+		if (!(p = lock_user_string(arg1)))
+			goto efault;
+		ret = get_errno(lutimes(p, tvp));
+		unlock_user(p, arg1, 0);
+	}
+	break;
+
+    case TARGET_FREEBSD_NR_futimes:
+	{
+		struct timeval *tvp, tv[2];
+
+		if (arg2) {
+			if (fbsd_copy_from_user_timeval(&tv[0], arg2)
+			    || fbsd_copy_from_user_timeval(&tv[1],
+				arg2 + sizeof(struct target_timeval)))
+				goto efault;
+			tvp = tv;
+		} else {
+			tvp = NULL;
+		}
+		ret = get_errno(futimes(arg1, tvp));
+	}
+	break;
+
+    case TARGET_FREEBSD_NR_futimesat:
+	{
+		struct timeval *tvp, tv[2];
+
+		if (arg3) {
+			if (fbsd_copy_from_user_timeval(&tv[0], arg3)
+			    || fbsd_copy_from_user_timeval(&tv[1],
+				arg3 + sizeof(struct target_timeval)))
+				goto efault;
+			tvp = tv;
+		} else {
+			tvp = NULL;
+		}
+		if (!(p = lock_user_string(arg2)))
+			goto efault;
+		ret = get_errno(futimesat(arg1, path(p), tvp));
+		unlock_user(p, arg2, 0);
+	}
+	break;
+
     default:
         ret = get_errno(syscall(num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8));
         break;
