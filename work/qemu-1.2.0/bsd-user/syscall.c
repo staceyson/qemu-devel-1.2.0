@@ -683,18 +683,21 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
     case TARGET_FREEBSD_NR___syscall:
         ret = do_freebsd_syscall(cpu_env,arg1 & 0xffff,arg2,arg3,arg4,arg5,arg6,arg7,arg8,0);
         break;
+
     case TARGET_FREEBSD_NR_stat:
 	 if (!(p = lock_user_string(arg1)))
             goto efault;
         ret = get_errno(stat(path(p), &st));
         unlock_user(p, arg1, 0);
         goto do_stat;
+
     case TARGET_FREEBSD_NR_lstat:
         if (!(p = lock_user_string(arg1)))
             goto efault;
         ret = get_errno(lstat(path(p), &st));
         unlock_user(p, arg1, 0);
         goto do_stat;
+
     case TARGET_FREEBSD_NR_fstat:
         {
             ret = get_errno(fstat(arg1, &st));
@@ -709,93 +712,102 @@ do_stat:
                 __put_user(st.st_dev, &target_st->st_dev);
                 __put_user(st.st_ino, &target_st->st_ino);
                 __put_user(st.st_mode, &target_st->st_mode);
+                __put_user(st.st_nlink, &target_st->st_nlink);
                 __put_user(st.st_uid, &target_st->st_uid);
                 __put_user(st.st_gid, &target_st->st_gid);
-                __put_user(st.st_nlink, &target_st->st_nlink);
                 __put_user(st.st_rdev, &target_st->st_rdev);
-                __put_user(st.st_size, &target_st->st_size);
-                __put_user(st.st_blksize, &target_st->st_blksize);
-                __put_user(st.st_blocks, &target_st->st_blocks);
                 __put_user(st.st_atim.tv_sec, &target_st->st_atim.tv_sec);
 		__put_user(st.st_atim.tv_nsec, &target_st->st_atim.tv_nsec);
                 __put_user(st.st_mtim.tv_sec, &target_st->st_mtim.tv_sec);
 		__put_user(st.st_mtim.tv_nsec, &target_st->st_mtim.tv_nsec);
                 __put_user(st.st_ctim.tv_sec, &target_st->st_ctim.tv_sec);
 		__put_user(st.st_ctim.tv_nsec, &target_st->st_ctim.tv_nsec);
-		__put_user(st.st_rdev, &target_st->st_rdev);
+                __put_user(st.st_size, &target_st->st_size);
+                __put_user(st.st_blocks, &target_st->st_blocks);
+                __put_user(st.st_blksize, &target_st->st_blksize);
 		__put_user(st.st_flags, &target_st->st_flags);
 		__put_user(st.st_gen, &target_st->st_gen);
-		__put_user(st.st_birthtim.tv_sec, &target_st->st_birthtim.tv_sec);
-		__put_user(st.st_birthtim.tv_nsec, &target_st->st_birthtim.tv_nsec);
+		/* st_lspare not used */
+		__put_user(st.st_birthtim.tv_sec,
+		    &target_st->st_birthtim.tv_sec);
+		__put_user(st.st_birthtim.tv_nsec,
+		    &target_st->st_birthtim.tv_nsec);
                 unlock_user_struct(target_st, arg2, 1);
 	  }
 
-        break;
 	}
+        break;
+
     case TARGET_FREEBSD_NR_clock_gettime:
-   { 
-	struct timespec ts;
-	ret = get_errno(clock_gettime(arg1, &ts));
-        if (!is_error(ret)) {
-           if (fbsd_copy_to_user_timespec(&ts, arg2))
-            goto efault;
-        }
+	{
+		struct timespec ts;
+
+		ret = get_errno(clock_gettime(arg1, &ts));
+		if (!is_error(ret)) {
+			if (fbsd_copy_to_user_timespec(&ts, arg2))
+				goto efault;
+		}
+    	}
         break;
-    }
+
    case TARGET_FREEBSD_NR_clock_getres:
-   { 
-	struct timespec ts;
-	ret = get_errno(clock_getres(arg1, &ts));
-        if (!is_error(ret)) {
-	   if (fbsd_copy_to_user_timespec(&ts, arg2))
-            goto efault;
-        }
-        break;
-    }
+	{
+		struct timespec ts;
+		ret = get_errno(clock_getres(arg1, &ts));
+		if (!is_error(ret)) {
+			if (fbsd_copy_to_user_timespec(&ts, arg2))
+				goto efault;
+		}
+	}
+	break;
+
     case TARGET_FREEBSD_NR_clock_settime:
-   { 
-	struct timespec ts;
-        if (fbsd_copy_from_user_timespec(&ts, arg2) != 0)
-          goto efault;
-	ret = get_errno(clock_settime(arg1, &ts));
-        break;
-    }
-     case TARGET_FREEBSD_NR_gettimeofday:
-   { 
-	struct timeval tv;
-	struct timezone tz, *target_tz;
-        if (arg2 != 0) {
-	  if (!lock_user_struct(VERIFY_READ, target_tz, arg2, 0))
-	      goto efault;
-	  __get_user(tz.tz_minuteswest, &target_tz->tz_minuteswest);
-	  __get_user(tz.tz_dsttime, &target_tz->tz_dsttime);
-	    unlock_user_struct(target_tz, arg2, 1);
-        }
-	ret = get_errno(gettimeofday(&tv, arg2 != 0 ? &tz : NULL));
-        if (!is_error(ret)) {
-           if (fbsd_copy_to_user_timeval(&tv, arg1))
-              goto efault;
+	{
+		struct timespec ts;
+		if (fbsd_copy_from_user_timespec(&ts, arg2) != 0)
+			goto efault;
+		ret = get_errno(clock_settime(arg1, &ts));
 	}
         break;
-    }
+
+     case TARGET_FREEBSD_NR_gettimeofday:
+	{
+		struct timeval tv;
+		struct timezone tz, *target_tz;
+		if (arg2 != 0) {
+			if (!lock_user_struct(VERIFY_READ, target_tz, arg2, 0))
+				goto efault;
+			__get_user(tz.tz_minuteswest,
+			    &target_tz->tz_minuteswest);
+			__get_user(tz.tz_dsttime, &target_tz->tz_dsttime);
+			unlock_user_struct(target_tz, arg2, 1);
+		}
+		ret = get_errno(gettimeofday(&tv, arg2 != 0 ? &tz : NULL));
+		if (!is_error(ret)) {
+			if (fbsd_copy_to_user_timeval(&tv, arg1))
+				goto efault;
+		}
+	}
+	break;
+
     case TARGET_FREEBSD_NR_settimeofday:
-   { 
-	struct timeval tv;
-        struct timezone tz, *target_tz;
+	{
+		struct timeval tv;
+		struct timezone tz, *target_tz;
 
-        if (arg2 != 0) {
-	  if (!lock_user_struct(VERIFY_READ, target_tz, arg2, 0))
-	      goto efault;
-	  __get_user(tz.tz_minuteswest, &target_tz->tz_minuteswest);
-	  __get_user(tz.tz_dsttime, &target_tz->tz_dsttime);
-	    unlock_user_struct(target_tz, arg2, 1);
-        }
-
-        if (fbsd_copy_from_user_timeval(&tv, arg1))
-           goto efault;
-	ret = get_errno(settimeofday(&tv, arg2 != 0 ? & tz : NULL));
+		if (arg2 != 0) {
+			if (!lock_user_struct(VERIFY_READ, target_tz, arg2, 0))
+				goto efault;
+			__get_user(tz.tz_minuteswest,
+			    &target_tz->tz_minuteswest);
+			__get_user(tz.tz_dsttime, &target_tz->tz_dsttime);
+			unlock_user_struct(target_tz, arg2, 1);
+		}
+		if (fbsd_copy_from_user_timeval(&tv, arg1))
+			goto efault;
+		ret = get_errno(settimeofday(&tv, arg2 != 0 ? & tz : NULL));
+	}
         break;
-    }
 
 #ifdef __FreeBSD__
     case TARGET_FREEBSD_NR_kevent:
