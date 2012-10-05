@@ -533,6 +533,20 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
         ret = get_errno(read(arg1, p, arg3));
         unlock_user(p, arg2, ret);
         break;
+
+    case TARGET_FREEBSD_NR_readv:
+	{
+		int count = arg3;
+		struct iovec *vec;
+
+		vec = alloca(count * sizeof(struct iovec));
+		if (lock_iovec(VERIFY_WRITE, vec, arg2, count, 0) < 0)
+			goto efault;
+		ret = get_errno(readv(arg1, vec, count));
+		unlock_iovec(vec, arg2, count, 1);
+	}
+	break;
+
     case TARGET_FREEBSD_NR_write:
         if (!(p = lock_user(VERIFY_READ, arg2, arg3, 1)))
             goto efault;
