@@ -536,6 +536,39 @@ fbsd_copy_to_user_fdset(abi_ulong target_fds_addr, const fd_set *fds, int n)
 	return (0);
 }
 
+#if TARGET_ABI_BITS == 32
+static inline uint64_t
+target_offset64(uint32_t word0, uint32_t word1)
+{
+#ifdef TARGET_WORDS_BIGENDIAN
+	return ((uint64_t)word0 << 32) | word1;
+#else
+	return ((uint64_t)word1 << 32) | word0;
+#endif
+}
+#else /* TARGET_ABI_BITS != 32 */
+static inline uint64_t
+target_offset64(uint64_t word0, uint64_t word1)
+{
+	return (word0);
+}
+#endif /* TARGET_ABI_BITS != 32 */
+
+/* ARM EABI and MIPS expect 64bit types aligned even on pairs of registers */
+#ifdef TARGET_ARM
+static inline int
+regpairs_aligned(void *cpu_env) {
+
+	return ((((CPUARMState *)cpu_env)->eabi) == 1);
+}
+#elif defined(TARGET_MIPS)
+static inline int
+regpairs_aligned(void *cpu_env) { return 1; }
+#else
+static inline int
+regpairs_aligned(void *cpu_env) { return 0; }
+#endif
+
 /* do_freebsd_select() must return target values and target errnos. */
 static abi_long
 do_freebsd_select(int n, abi_ulong rfd_addr, abi_ulong wfd_addr,
@@ -630,12 +663,34 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 	}
 	break;
 
+    case TARGET_FREEBSD_NR_pread:
+	if (!(p = lock_user(VERIFY_WRITE, arg2, arg3, 0)))
+		goto efault;
+	ret = get_errno(pread(arg1, p, arg3, target_offset64(arg4, arg5)));
+	unlock_user(p, arg2, ret);
+	break;
+
+    case TARGET_FREEBSD_NR_preadv:
+	{
+		int count = arg3;
+		struct iovec *vec;
+
+		vec = alloca(count * sizeof(struct iovec));
+		if (lock_iovec(VERIFY_WRITE, vec, arg2, count, 0) < 0)
+			goto efault;
+		ret = get_errno(preadv(arg1, vec, count,
+			target_offset64(arg4, arg5)));
+		unlock_iovec(vec, arg2, count, 1);
+	}
+	break;
+
     case TARGET_FREEBSD_NR_write:
         if (!(p = lock_user(VERIFY_READ, arg2, arg3, 1)))
             goto efault;
         ret = get_errno(write(arg1, p, arg3));
         unlock_user(p, arg2, 0);
         break;
+
     case TARGET_FREEBSD_NR_writev:
         {
             int count = arg3;
@@ -648,6 +703,28 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
             unlock_iovec(vec, arg2, count, 0);
         }
         break;
+
+    case TARGET_FREEBSD_NR_pwrite:
+	if (!(p = lock_user(VERIFY_READ, arg2, arg3, 1)))
+		goto efault;
+	ret = get_errno(pwrite(arg1, p, arg3, target_offset64(arg4, arg5)));
+	unlock_user(p, arg2, 0); 
+	break;
+
+    case TARGET_FREEBSD_NR_pwritev:
+	{
+		int count = arg3;
+		struct iovec *vec;
+
+		vec = alloca(count * sizeof(struct iovec));
+		if (lock_iovec(VERIFY_READ, vec, arg2, count, 1) < 0)
+			goto efault;
+		ret = get_errno(pwritev(arg1, vec, count,
+			target_offset64(arg4, arg5)));
+		unlock_iovec(vec, arg2, count, 0);
+	}
+	break;
+
     case TARGET_FREEBSD_NR_open:
         if (!(p = lock_user_string(arg1)))
             goto efault;
@@ -998,7 +1075,7 @@ do_stat:
 	{
 #if defined(TARGET_MIPS) && TARGET_ABI_BITS == 32
 		/* 32-bit MIPS uses two 32 registers for 64 bit arguments */
-		int64_t res = lseek(arg1, ((uint64_t)arg2 << 32) | arg3, arg4);
+		int64_t res = lseek(arg1, target_offset64(arg2, arg3), arg4);
 
 		if (res == -1) {
 			ret = get_errno(res);
