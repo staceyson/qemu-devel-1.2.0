@@ -123,6 +123,33 @@
 #define	TARGET_TRAP_BRKPT	(1)	/* process beakpoint */
 #define	TARGET_TRAP_TRACE	(2)	/* process trace trap */
 
+struct target_rlimit {
+	abi_ulong rlim_cur;
+	abi_ulong rlim_max;
+};
+
+#if defined(TARGET_ALPHA)
+#define	TARGET_RLIM_INFINITY	0x7fffffffffffffffull
+#elif defined(TARGET_MIPS) || (defined(TARGET_SPARC) && TARGET_ABI_BITS == 32)
+#define	TARGET_RLIM_INFINITY	0x7fffffffUL
+#else
+#define	TARGET_RLIM_INFINITY	((abi_ulong)-1)
+#endif
+
+#define TARGET_RLIMIT_CPU	0
+#define TARGET_RLIMIT_FSIZE	1
+#define TARGET_RLIMIT_DATA	2
+#define TARGET_RLIMIT_STACK	3
+#define TARGET_RLIMIT_CORE	4
+#define TARGET_RLIMIT_RSS	5
+#define TARGET_RLIMIT_MEMLOCK	6
+#define TARGET_RLIMIT_NPROC	7
+#define TARGET_RLIMIT_NOFILE	8
+#define TARGET_RLIMIT_SBSIZE	9
+#define TARGET_RLIMIT_AS	10
+#define TARGET_RLIMIT_NPTS	11
+#define TARGET_RLIMIT_SWAP	12
+
 #include "errno_defs.h"
 
 #include "freebsd/syscall_nr.h"

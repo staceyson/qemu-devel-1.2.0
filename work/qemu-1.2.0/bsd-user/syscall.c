@@ -27,9 +27,11 @@
 #include <time.h>
 #include <limits.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/param.h>
+#include <sys/resource.h>
 #include <sys/sysctl.h>
 #include <sys/event.h>
 #include <utime.h>
@@ -334,6 +336,87 @@ static abi_long unlock_iovec(struct iovec *vec, abi_ulong target_addr,
     unlock_user (target_vec, target_addr, 0);
 
     return 0;
+}
+
+static inline rlim_t
+target_to_host_rlim(abi_ulong target_rlim)
+{
+	abi_ulong target_rlim_swap;
+	rlim_t result;
+
+	target_rlim_swap = tswapal(target_rlim);
+	if (target_rlim_swap == TARGET_RLIM_INFINITY)
+		return (RLIM_INFINITY);
+
+	result = target_rlim_swap;
+	if (target_rlim_swap != (rlim_t)result)
+		return (RLIM_INFINITY);
+
+	return (result);
+}
+
+static inline abi_ulong
+host_to_target_rlim(rlim_t rlim)
+{
+	abi_ulong target_rlim_swap;
+	abi_ulong result;
+
+	if (rlim == RLIM_INFINITY || rlim != (abi_long)rlim)
+		target_rlim_swap = TARGET_RLIM_INFINITY;
+	else
+		target_rlim_swap = rlim;
+	result = tswapal(target_rlim_swap);
+
+	return (result);
+}
+
+static inline int
+target_to_host_resource(int code)
+{
+
+	switch (code) {
+	case TARGET_RLIMIT_AS:
+		return RLIMIT_AS;
+
+	case TARGET_RLIMIT_CORE:
+		return RLIMIT_CORE;
+
+	case TARGET_RLIMIT_CPU:
+		return RLIMIT_CPU;
+
+	case TARGET_RLIMIT_DATA:
+		return RLIMIT_DATA;
+
+	case TARGET_RLIMIT_FSIZE:
+		return RLIMIT_FSIZE;
+
+	case TARGET_RLIMIT_MEMLOCK:
+		return RLIMIT_MEMLOCK;
+
+	case TARGET_RLIMIT_NOFILE:
+		return RLIMIT_NOFILE;
+
+	case TARGET_RLIMIT_NPROC:
+		return RLIMIT_NPROC;
+
+	case TARGET_RLIMIT_RSS:
+		return RLIMIT_RSS;
+
+	case TARGET_RLIMIT_SBSIZE:
+		return RLIMIT_SBSIZE;
+
+	case TARGET_RLIMIT_STACK:
+		return RLIMIT_STACK;
+
+	case TARGET_RLIMIT_SWAP:
+		return RLIMIT_SWAP;
+
+	case TARGET_RLIMIT_NPTS:
+		return RLIMIT_NPTS;
+
+	default:
+		return (code);
+	}
 }
 
 static inline abi_long
@@ -920,6 +1003,42 @@ do_stat:
 
     case TARGET_FREEBSD_NR_select:
 	ret = do_freebsd_select(arg1, arg2, arg3, arg4, arg5);
+	break;
+
+    case TARGET_FREEBSD_NR_setrlimit:
+	{
+		int resource = target_to_host_resource(arg1);
+		struct target_rlimit *target_rlim;
+		struct rlimit rlim;
+
+		if (!lock_user_struct(VERIFY_READ, target_rlim, arg2, 1))
+			goto efault;
+		rlim.rlim_cur = target_to_host_rlim(target_rlim->rlim_cur);
+		rlim.rlim_max = target_to_host_rlim(target_rlim->rlim_max);
+		unlock_user_struct(target_rlim, arg2, 0);
+		ret = get_errno(setrlimit(resource, &rlim));
+	}
+	break;
+
+
+    case TARGET_FREEBSD_NR_getrlimit:
+	{
+		int resource = target_to_host_resource(arg1);
+		struct target_rlimit *target_rlim;
+		struct rlimit rlim;
+
+		ret = get_errno(getrlimit(resource, &rlim));
+		if (!is_error(ret)) {
+			if (!lock_user_struct(VERIFY_WRITE, target_rlim, arg2,
+				0))
+				goto efault;
+			target_rlim->rlim_cur =
+			    host_to_target_rlim(rlim.rlim_cur);
+			target_rlim->rlim_max =
+			    host_to_target_rlim(rlim.rlim_max);
+			unlock_user_struct(target_rlim, arg2, 1);
+		}
+	}
 	break;
 
     default:
