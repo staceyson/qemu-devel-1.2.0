@@ -161,6 +161,11 @@ struct target_iovec {
     abi_long iov_len;   /* Number of bytes */
 };
 
+struct target_timeval {
+	abi_long tv_sec;
+	abi_long tv_usec;
+};
+
 typedef abi_long target_clock_t;
 
 #define	TARGET_NSIG		128

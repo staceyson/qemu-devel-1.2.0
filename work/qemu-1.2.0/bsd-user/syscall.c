@@ -1041,6 +1041,44 @@ do_stat:
 	}
 	break;
 
+    case TARGET_FREEBSD_NR_setitimer:
+	{
+		struct itimerval value, ovalue, *pvalue;
+
+		if (arg2) {
+			pvalue = &value;
+			if (fbsd_copy_from_user_timeval(&pvalue->it_interval,
+				arg2) || fbsd_copy_from_user_timeval(
+				&pvalue->it_value, arg2 +
+				sizeof(struct target_timeval)))
+				goto efault;
+		} else {
+			pvalue = NULL;
+		}
+		ret = get_errno(setitimer(arg1, pvalue, &ovalue));
+		if (!is_error(ret) && arg3) {
+			if (fbsd_copy_to_user_timeval(&ovalue.it_interval, arg3)
+			    || fbsd_copy_to_user_timeval(&ovalue.it_value,
+				arg3 + sizeof(struct target_timeval)))
+				goto efault;
+		}
+	}
+	break;
+
+    case TARGET_FREEBSD_NR_getitimer:
+	{
+		struct itimerval value;
+
+		ret = get_errno(getitimer(arg1, &value));
+		if (!is_error(ret) && arg2) {
+			if (fbsd_copy_to_user_timeval(&value.it_interval, arg2)
+			    || fbsd_copy_to_user_timeval(&value.it_value,
+				arg2 + sizeof(struct target_timeval)))
+				goto efault;
+		}
+	}
+	break;
+
     default:
         ret = get_errno(syscall(num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8));
         break;
