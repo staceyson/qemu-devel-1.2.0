@@ -1569,6 +1569,20 @@ do_stat:
 	 unlock_user(p, arg2, 0);
 	 break;
 
+    case TARGET_FREEBSD_NR_mknod:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(mknod(p, arg2, arg3));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_mknodat:
+	 if (!(p = lock_user_string(arg2)))
+		 goto efault;
+	 ret = get_errno(mknodat(arg1, p, arg3, arg4));
+	 unlock_user(p, arg2, 0);
+	 break;
+
     case TARGET_FREEBSD_NR_fcntl:
 
     /* case TARGET_FREEBSD_NR_umask: */
@@ -1588,9 +1602,6 @@ do_stat:
 
     case TARGET_FREEBSD_NR_reboot:
     case TARGET_FREEBSD_NR_shutdown:
-
-    case TARGET_FREEBSD_NR_mknod:
-    case TARGET_FREEBSD_NR_mknodat:
 
     case TARGET_FREEBSD_NR_getpriority:
     case TARGET_FREEBSD_NR_setpriority:
