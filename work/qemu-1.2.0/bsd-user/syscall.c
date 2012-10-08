@@ -1418,7 +1418,20 @@ do_stat:
 	 unlock_user(p, arg1, 0);
 	 break;
 
-    /* case TARGET_FREEBSD_NR_dup: */
+    case TARGET_FREEBSD_NR_dup:
+	 ret = get_errno(dup(arg1));
+	 break;
+
+    case TARGET_FREEBSD_NR_acct:
+	 if (arg1 == 0) {
+		 ret = get_errno(acct(NULL));
+	 } else {
+		 if (!(p = lock_user_string(arg1)))
+			 goto efault;
+		 ret = get_errno(acct(path(p)));
+		 unlock_user(p, arg1, 0);
+	 }
+	 break;
 
     case TARGET_FREEBSD_NR_sync:
     case TARGET_FREEBSD_NR_mount:
