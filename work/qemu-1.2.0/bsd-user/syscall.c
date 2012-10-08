@@ -1484,7 +1484,66 @@ do_stat:
 	 }
 	 break;
 
-    case TARGET_FREEBSD_NR_ioctl:
+    case TARGET_FREEBSD_NR_symlink:
+	 {
+		 void *p2;
+
+		 p = lock_user_string(arg1);
+		 p2 = lock_user_string(arg2);
+		 if (!p || !p2)
+			 ret = -TARGET_EFAULT;
+		 else
+			 ret = get_errno(symlink(p, p2));
+		 unlock_user(p2, arg2, 0);
+		 unlock_user(p, arg1, 0);
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR_symlinkat:
+	 {
+		 void *p2;
+
+		 p  = lock_user_string(arg1);
+		 p2 = lock_user_string(arg3);
+		 if (!p || !p2)
+			 ret = -TARGET_EFAULT;
+		 else
+			 ret = get_errno(symlinkat(p, arg2, p2));
+		 unlock_user(p2, arg3, 0);
+		 unlock_user(p, arg1, 0);
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR_readlink:
+	 {
+		 void *p2;
+
+		 p = lock_user_string(arg1);
+		 p2 = lock_user(VERIFY_WRITE, arg2, arg3, 0);
+		 if (!p || !p2)
+			 ret = -TARGET_EFAULT;
+		 else
+			 ret = get_errno(readlink(path(p), p2, arg3));
+		 unlock_user(p2, arg2, ret);
+		 unlock_user(p, arg1, 0);
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR_readlinkat:
+	 {
+		 void *p2;
+		 p = lock_user_string(arg2);
+		 p2 = lock_user(VERIFY_WRITE, arg3, arg4, 0);
+
+		 if (!p || !p2)
+			 ret = -TARGET_EFAULT;
+		 else
+			 ret = get_errno(readlinkat(arg1, path(p), p2, arg4));
+		 unlock_user(p2, arg3, ret);
+		 unlock_user(p, arg2, 0);
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_fcntl:
 
     /* case TARGET_FREEBSD_NR_umask: */
@@ -1501,12 +1560,6 @@ do_stat:
     case TARGET_FREEBSD_NR_getrusage:
 
     case TARGET_FREEBSD_NR_pselect:
-
-    case TARGET_FREEBSD_NR_symlink:
-    case TARGET_FREEBSD_NR_symlinkat:
-
-    case TARGET_FREEBSD_NR_readlink:
-    case TARGET_FREEBSD_NR_readlinkat:
 
     case TARGET_FREEBSD_NR_reboot:
     case TARGET_FREEBSD_NR_shutdown:
@@ -1578,6 +1631,7 @@ do_stat:
     case TARGET_FREEBSD_NR_setgroups:
 
     case TARGET_FREEBSD_NR_ptrace:
+    case TARGET_FREEBSD_NR_ioctl:
 
     /* case TARGET_FREEBSD_NR_posix_fadvise: */
 
