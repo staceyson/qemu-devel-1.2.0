@@ -569,6 +569,14 @@ static inline int
 regpairs_aligned(void *cpu_env) { return 0; }
 #endif
 
+static inline abi_long
+unimplemented(int num)
+{
+
+	qemu_log("qemu: Unsupported syscall: %d\n", num);
+	return (-TARGET_ENOSYS);
+}
+
 /* do_freebsd_select() must return target values and target errnos. */
 static abi_long
 do_freebsd_select(int n, abi_ulong rfd_addr, abi_ulong wfd_addr,
@@ -745,6 +753,16 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
     case TARGET_FREEBSD_NR_mprotect:
         ret = get_errno(target_mprotect(arg1, arg2, arg3));
         break;
+
+    case TARGET_FREEBSD_NR_msync:
+    case TARGET_FREEBSD_NR_mlock:
+    case TARGET_FREEBSD_NR_munlock:
+    /* case TARGET_FREEBSD_NR_mlockall: */
+    /* case TARGET_FREEBSD_NR_munlockall: */
+    case TARGET_FREEBSD_NR_madvise:
+	ret = unimplemented(num);
+	break;
+
     case TARGET_FREEBSD_NR_break:
         ret = do_obreak(arg1);
         break;
@@ -1246,6 +1264,137 @@ do_stat:
 		unlock_user(p, arg2, 0);
 	}
 	break;
+
+
+    case TARGET_FREEBSD_NR_ptrace:
+
+    case TARGET_FREEBSD_NR_access:
+    case TARGET_FREEBSD_NR_eaccess:
+    case TARGET_FREEBSD_NR_faccessat:
+
+    /* case TARGET_FREEBSD_NR_nice: */
+
+    case TARGET_FREEBSD_NR_chdir:
+    /* case TARGET_FREEBSD_NR_fchdir: */
+
+    case TARGET_FREEBSD_NR_rename:
+    case TARGET_FREEBSD_NR_renameat:
+
+    case TARGET_FREEBSD_NR_link:
+    case TARGET_FREEBSD_NR_linkat:
+
+    case TARGET_FREEBSD_NR_unlink:
+    case TARGET_FREEBSD_NR_unlinkat:
+
+    case TARGET_FREEBSD_NR_mkdir:
+    case TARGET_FREEBSD_NR_mkdirat:
+    case TARGET_FREEBSD_NR_rmdir:
+
+    /* case TARGET_FREEBSD_NR_dup: */
+
+    case TARGET_FREEBSD_NR_sync:
+    case TARGET_FREEBSD_NR_mount:
+    case TARGET_FREEBSD_NR_unmount:
+    case TARGET_FREEBSD_NR_nmount:
+
+    case TARGET_FREEBSD_NR_ioctl:
+    case TARGET_FREEBSD_NR_fcntl:
+
+    /* case TARGET_FREEBSD_NR_umask: */
+
+    case TARGET_FREEBSD_NR_chroot:
+
+    case TARGET_FREEBSD_NR_kill:
+    case TARGET_FREEBSD_NR_sigaction:
+    case TARGET_FREEBSD_NR_sigprocmask:
+    case TARGET_FREEBSD_NR_sigpending:
+    case TARGET_FREEBSD_NR_sigsuspend:
+    case TARGET_FREEBSD_NR_sigreturn:
+
+    case TARGET_FREEBSD_NR_getrusage:
+
+    case TARGET_FREEBSD_NR_pselect:
+
+    case TARGET_FREEBSD_NR_symlink:
+    case TARGET_FREEBSD_NR_symlinkat:
+
+    case TARGET_FREEBSD_NR_readlink:
+    case TARGET_FREEBSD_NR_readlinkat:
+
+    case TARGET_FREEBSD_NR_reboot:
+    case TARGET_FREEBSD_NR_shutdown:
+
+    case TARGET_FREEBSD_NR_chmod:
+    /* case TARGET_FREEBSD_NR_fchmod: */
+    case TARGET_FREEBSD_NR_lchmod:
+    case TARGET_FREEBSD_NR_fchmodat:
+
+    case TARGET_FREEBSD_NR_mknod:
+    case TARGET_FREEBSD_NR_mknodat:
+
+    case TARGET_FREEBSD_NR_getpriority:
+    case TARGET_FREEBSD_NR_setpriority:
+
+    case TARGET_FREEBSD_NR_accept:
+    case TARGET_FREEBSD_NR_bind:
+    case TARGET_FREEBSD_NR_connect:
+    case TARGET_FREEBSD_NR_getpeername:
+    case TARGET_FREEBSD_NR_getsockname:
+    case TARGET_FREEBSD_NR_getsockopt:
+    /* case TARGET_FREEBSD_NR_listen: */
+    case TARGET_FREEBSD_NR_recvfrom:
+    case TARGET_FREEBSD_NR_recvmsg:
+    case TARGET_FREEBSD_NR_sendmsg:
+    case TARGET_FREEBSD_NR_sendto:
+    /* case TARGET_FREEBSD_NR_socket: */
+    case TARGET_FREEBSD_NR_socketpair:
+
+    case TARGET_FREEBSD_NR_wait4:
+
+    case TARGET_FREEBSD_NR_swapon:
+    case TARGET_FREEBSD_NR_swapoff:
+
+    case TARGET_FREEBSD_NR_semget:
+    case TARGET_FREEBSD_NR_semop:
+    case TARGET_FREEBSD_NR___semctl:
+    case TARGET_FREEBSD_NR_msgctl:
+    case TARGET_FREEBSD_NR_msgrcv:
+    case TARGET_FREEBSD_NR_msgsnd:
+    case TARGET_FREEBSD_NR_shmget:
+    case TARGET_FREEBSD_NR_shmctl:
+    case TARGET_FREEBSD_NR_shmdt:
+
+    case TARGET_FREEBSD_NR_getdents:
+    case TARGET_FREEBSD_NR_getdirentries:
+
+    case TARGET_FREEBSD_NR_poll:
+
+    case TARGET_FREEBSD_NR_nanosleep:
+
+    case TARGET_FREEBSD_NR___getcwd:
+
+    case TARGET_FREEBSD_NR_sendfile:
+
+    case TARGET_FREEBSD_NR_fork:
+    case TARGET_FREEBSD_NR_rfork:
+    case TARGET_FREEBSD_NR_vfork:
+
+    case TARGET_FREEBSD_NR_truncate:
+    case TARGET_FREEBSD_NR_ftruncate:
+
+    case TARGET_FREEBSD_NR_chown:
+    case TARGET_FREEBSD_NR_fchown:
+    case TARGET_FREEBSD_NR_lchown:
+    case TARGET_FREEBSD_NR_fchownat:
+
+    case TARGET_FREEBSD_NR_getgroups:
+    case TARGET_FREEBSD_NR_setgroups:
+
+    /* case TARGET_FREEBSD_NR_posix_fadvise: */
+
+	ret = unimplemented(num);
+	break;
+
 
     default:
         ret = get_errno(syscall(num, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8));
