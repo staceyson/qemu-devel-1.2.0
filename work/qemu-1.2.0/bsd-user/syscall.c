@@ -1583,6 +1583,31 @@ do_stat:
 	 unlock_user(p, arg2, 0);
 	 break;
 
+    case TARGET_FREEBSD_NR_chown:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(chown(p, arg2, arg3));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_fchown:
+	 ret = get_errno(fchown(arg1, arg2, arg3));
+	 break;
+
+    case TARGET_FREEBSD_NR_lchown:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(lchown(p, arg2, arg3));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_fchownat:
+	 if (!(p = lock_user_string(arg2)))
+		 goto efault;
+	 ret = get_errno(fchownat(arg1, p, arg3, arg4, arg5));
+	 unlock_user(p, arg2, 0);
+	 break;
+
     case TARGET_FREEBSD_NR_fcntl:
 
     /* case TARGET_FREEBSD_NR_umask: */
@@ -1642,7 +1667,7 @@ do_stat:
 
     case TARGET_FREEBSD_NR_nanosleep:
 
-    case TARGET_FREEBSD_NR___getcwd:
+    /* case TARGET_FREEBSD_NR___getcwd: */
 
     case TARGET_FREEBSD_NR_sendfile:
 
@@ -1652,11 +1677,6 @@ do_stat:
 
     case TARGET_FREEBSD_NR_truncate:
     case TARGET_FREEBSD_NR_ftruncate:
-
-    case TARGET_FREEBSD_NR_chown:
-    case TARGET_FREEBSD_NR_fchown:
-    case TARGET_FREEBSD_NR_lchown:
-    case TARGET_FREEBSD_NR_fchownat:
 
     case TARGET_FREEBSD_NR_getgroups:
     case TARGET_FREEBSD_NR_setgroups:
