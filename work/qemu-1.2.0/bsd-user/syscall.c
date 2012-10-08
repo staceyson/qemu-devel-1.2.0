@@ -1289,14 +1289,25 @@ do_stat:
 	}
 	break;
 
-
-    case TARGET_FREEBSD_NR_ptrace:
-
     case TARGET_FREEBSD_NR_access:
-    case TARGET_FREEBSD_NR_eaccess:
-    case TARGET_FREEBSD_NR_faccessat:
+	if (!(p = lock_user_string(arg1)))
+		goto efault;
+	ret = get_errno(access(path(p), arg2));
+	unlock_user(p, arg1, 0);
 
-    /* case TARGET_FREEBSD_NR_nice: */
+    case TARGET_FREEBSD_NR_eaccess:
+	if (!(p = lock_user_string(arg1)))
+		goto efault;
+	ret = get_errno(eaccess(path(p), arg2));
+	unlock_user(p, arg1, 0);
+	break;
+
+    case TARGET_FREEBSD_NR_faccessat:
+	if (!(p = lock_user_string(arg2)))
+		goto efault;
+	ret = get_errno(faccessat(arg1, p, arg3, arg4));
+	unlock_user(p, arg2, 0);
+	break;
 
     case TARGET_FREEBSD_NR_chdir:
     /* case TARGET_FREEBSD_NR_fchdir: */
@@ -1413,6 +1424,8 @@ do_stat:
 
     case TARGET_FREEBSD_NR_getgroups:
     case TARGET_FREEBSD_NR_setgroups:
+
+    case TARGET_FREEBSD_NR_ptrace:
 
     /* case TARGET_FREEBSD_NR_posix_fadvise: */
 
