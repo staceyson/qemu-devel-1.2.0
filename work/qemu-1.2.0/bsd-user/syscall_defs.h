@@ -150,11 +150,48 @@ struct target_rlimit {
 #define TARGET_RLIMIT_NPTS	11
 #define TARGET_RLIMIT_SWAP	12
 
+/*
+ * Constants used for fcntl(2).
+ */
+
+/* command values */
+#define	TARGET_F_DUPFD		0
+#define	TARGET_F_GETFD		1
+#define	TARGET_F_SETFD		2
+#define	TARGET_F_GETFL		3
+#define	TARGET_F_SETFL		4
+#define	TARGET_F_GETOWN		5
+#define	TARGET_F_SETOWN		6
+#define	TARGET_F_OGETLK		7
+#define	TARGET_F_OSETLK		8
+#define	TARGET_F_OSETLKW	9
+#define	TARGET_F_DUP2FD		10
+#define	TARGET_F_GETLK		11
+#define	TARGET_F_SETLK		12
+#define	TARGET_F_SETLKW		13
+#define	TARGET_F_SETLK_REMOTE	14
+#define	TARGET_F_READAHEAD	15
+#define	TARGET_F_RDAHEAD	16
+
+#define	TARGET_O_NONBLOCK	0x00000004 
+#define	TARGET_O_APPEND		0x00000008
+#define	TARGET_O_ASYNC		0x00000040
+#define	TARGET_O_DIRECT		0x00010000
+
 #include "errno_defs.h"
 
 #include "freebsd/syscall_nr.h"
 #include "netbsd/syscall_nr.h"
 #include "openbsd/syscall_nr.h"
+
+struct target_flock {
+    unsigned long long l_start;
+    unsigned long long l_len;
+    int l_pid;
+    int l_sysid;
+    short l_type;
+    short l_whence;
+} QEMU_PACKED;
 
 struct target_iovec {
     abi_long iov_base;   /* Starting address */

@@ -420,6 +420,55 @@ target_to_host_resource(int code)
 	}
 }
 
+static int
+target_to_host_fcntl_cmd(int cmd)
+{
+
+	switch(cmd) {
+	case TARGET_F_DUPFD:
+		return F_DUPFD;
+
+	case TARGET_F_DUP2FD:
+		return F_DUP2FD;
+
+	case TARGET_F_GETFD:
+		return F_GETFD;
+
+	case TARGET_F_SETFD:
+		return F_SETFD;
+
+	case TARGET_F_GETFL:
+		return F_GETFL;
+
+	case TARGET_F_SETFL:
+		return F_SETFL;
+
+	case TARGET_F_GETOWN:
+		return F_GETOWN;
+
+	case TARGET_F_SETOWN:
+		return F_SETOWN;
+
+	case TARGET_F_GETLK:
+		return F_GETLK;
+
+	case TARGET_F_SETLK:
+		return F_SETLK;
+
+	case TARGET_F_SETLKW:
+		return F_SETLKW;
+
+	case TARGET_F_READAHEAD:
+		return F_READAHEAD;
+
+	case TARGET_F_RDAHEAD:
+		return F_RDAHEAD;
+
+	default:
+		return (cmd);
+	}
+}
+
 static inline abi_long
 fbsd_copy_from_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
 {
@@ -1423,6 +1472,10 @@ do_stat:
 	 ret = get_errno(dup(arg1));
 	 break;
 
+    case TARGET_FREEBSD_NR_dup2:
+	 ret = get_errno(dup2(arg1, arg2));
+	 break;
+
     case TARGET_FREEBSD_NR_acct:
 	 if (arg1 == 0) {
 		 ret = get_errno(acct(NULL));
@@ -1608,11 +1661,85 @@ do_stat:
 	 unlock_user(p, arg2, 0);
 	 break;
 
-    case TARGET_FREEBSD_NR_fcntl:
+    case TARGET_FREEBSD_NR_umask:
+	 ret = get_errno(umask(arg1));
+	 break;
 
-    /* case TARGET_FREEBSD_NR_umask: */
+    case TARGET_FREEBSD_NR_fcntl:
+	 {
+		 int host_cmd;
+		 struct flock fl;
+		 struct target_flock *target_fl;
+
+		 host_cmd = target_to_host_fcntl_cmd(arg2);
+		 if (-TARGET_EINVAL == host_cmd) {
+			 ret = host_cmd;
+			 break;
+		 }
+
+		 switch(arg2) {
+		 case TARGET_F_GETLK:
+			 if (!lock_user_struct(VERIFY_READ, target_fl, arg3, 1))
+				 return (-TARGET_EFAULT);
+			 fl.l_type = tswap16(target_fl->l_type);
+			 fl.l_whence = tswap16(target_fl->l_whence);
+			 fl.l_start = tswapal(target_fl->l_start);
+			 fl.l_len = tswapal(target_fl->l_len);
+			 fl.l_pid = tswap32(target_fl->l_pid);
+			 fl.l_sysid = tswap32(target_fl->l_sysid);
+			 unlock_user_struct(target_fl, arg3, 0);
+			 ret = get_errno(fcntl(arg1, host_cmd, &fl));
+			 if (0 == ret) {
+				 if (!lock_user_struct(VERIFY_WRITE, target_fl,
+					 arg3, 0))
+					 return (-TARGET_EFAULT);
+				 target_fl->l_type = tswap16(fl.l_type);
+				 target_fl->l_whence = tswap16(fl.l_whence);
+				 target_fl->l_start = tswapal(fl.l_start);
+				 target_fl->l_len = tswapal(fl.l_len);
+				 target_fl->l_pid = tswap32(fl.l_pid);
+				 target_fl->l_sysid = tswap32(fl.l_sysid);
+				 unlock_user_struct(target_fl, arg3, 1);
+			 }
+			 break;
+
+		 case TARGET_F_SETLK:
+		 case TARGET_F_SETLKW:
+			 if (!lock_user_struct(VERIFY_READ, target_fl, arg3, 1))
+				 return (-TARGET_EFAULT);
+			 fl.l_type = tswap16(target_fl->l_type);
+			 fl.l_whence = tswap16(target_fl->l_whence);
+			 fl.l_start = tswapal(target_fl->l_start);
+			 fl.l_len = tswapal(target_fl->l_len);
+			 fl.l_pid = tswap32(target_fl->l_pid);
+			 fl.l_sysid = tswap32(target_fl->l_sysid);
+			 unlock_user_struct(target_fl, arg3, 0);
+			 ret = get_errno(fcntl(arg1, host_cmd, &fl));
+			 break;
+
+		 case TARGET_F_DUPFD:
+		 case TARGET_F_DUP2FD:
+		 case TARGET_F_GETOWN:
+		 case TARGET_F_SETOWN:
+		 case TARGET_F_GETFD:
+		 case TARGET_F_SETFD:
+		 case TARGET_F_GETFL:
+		 case TARGET_F_SETFL:
+		 case TARGET_F_READAHEAD:
+		 case TARGET_F_RDAHEAD:
+		 default:
+			 ret = get_errno(fcntl(arg1, host_cmd, arg3));
+			 break;
+		 }
+	 }
+	 break;
 
     case TARGET_FREEBSD_NR_chroot:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(chroot(p));
+	 unlock_user(p, arg1, 0);
+	 break;
 
     case TARGET_FREEBSD_NR_kill:
     case TARGET_FREEBSD_NR_sigaction:
