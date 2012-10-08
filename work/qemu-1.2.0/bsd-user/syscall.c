@@ -1398,8 +1398,25 @@ do_stat:
 	break;
 
     case TARGET_FREEBSD_NR_mkdir:
+	if (!(p = lock_user_string(arg1)))
+		goto efault;
+	ret = get_errno(mkdir(p, arg2));
+	unlock_user(p, arg1, 0);
+	break;
+
     case TARGET_FREEBSD_NR_mkdirat:
+	 if (!(p = lock_user_string(arg2)))
+		 goto efault;
+	 ret = get_errno(mkdirat(arg1, p, arg3));
+	 unlock_user(p, arg2, 0);
+	 break;
+
     case TARGET_FREEBSD_NR_rmdir:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(rmdir(p));
+	 unlock_user(p, arg1, 0);
+	 break;
 
     /* case TARGET_FREEBSD_NR_dup: */
 
