@@ -741,26 +741,50 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
                              arg3));
         unlock_user(p, arg1, 0);
         break;
+
     case TARGET_FREEBSD_NR_mmap:
         ret = get_errno(target_mmap(arg1, arg2, arg3,
                                     target_to_host_bitmask(arg4, mmap_flags_tbl),
                                     arg5,
                                     arg6));
         break;
+
     case TARGET_FREEBSD_NR_munmap:
         ret = get_errno(target_munmap(arg1, arg2));
         break;
+
     case TARGET_FREEBSD_NR_mprotect:
         ret = get_errno(target_mprotect(arg1, arg2, arg3));
         break;
 
     case TARGET_FREEBSD_NR_msync:
+	ret = get_errno(msync(g2h(arg1), arg2, arg3));
+	break;
+
     case TARGET_FREEBSD_NR_mlock:
+	ret = get_errno(mlock(g2h(arg1), arg2));
+	break;
+
     case TARGET_FREEBSD_NR_munlock:
-    /* case TARGET_FREEBSD_NR_mlockall: */
-    /* case TARGET_FREEBSD_NR_munlockall: */
+	ret = get_errno(munlock(g2h(arg1), arg2));
+	break;
+
+    case TARGET_FREEBSD_NR_mlockall:
+	ret = get_errno(mlockall(arg1));
+	break;
+
+    case TARGET_FREEBSD_NR_munlockall:
+	ret = get_errno(munlockall());
+	break;
+
     case TARGET_FREEBSD_NR_madvise:
-	ret = unimplemented(num);
+	/*
+	 * A straight passthrough may not be safe because qemu sometimes
+	 * turns private file-backed mapping into anonymous mappings. This
+	 * will break MADV_DONTNEED.  This is a hint, so ignoring and returing
+	 * success is ok.
+	 */
+	ret = get_errno(0);
 	break;
 
     case TARGET_FREEBSD_NR_break:
