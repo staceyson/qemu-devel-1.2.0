@@ -1544,6 +1544,31 @@ do_stat:
 	 }
 	 break;
 
+    case TARGET_FREEBSD_NR_chmod:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(chmod(p, arg2));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_fchmod:
+	 ret = get_errno(fchmod(arg1, arg2));
+	 break;
+
+    case TARGET_FREEBSD_NR_lchmod:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(lchmod(p, arg2));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_fchmodat:
+	 if (!(p = lock_user_string(arg2)))
+		 goto efault;
+	 ret = get_errno(fchmodat(arg1, p, arg3, arg4));
+	 unlock_user(p, arg2, 0);
+	 break;
+
     case TARGET_FREEBSD_NR_fcntl:
 
     /* case TARGET_FREEBSD_NR_umask: */
@@ -1563,11 +1588,6 @@ do_stat:
 
     case TARGET_FREEBSD_NR_reboot:
     case TARGET_FREEBSD_NR_shutdown:
-
-    case TARGET_FREEBSD_NR_chmod:
-    /* case TARGET_FREEBSD_NR_fchmod: */
-    case TARGET_FREEBSD_NR_lchmod:
-    case TARGET_FREEBSD_NR_fchmodat:
 
     case TARGET_FREEBSD_NR_mknod:
     case TARGET_FREEBSD_NR_mknodat:
