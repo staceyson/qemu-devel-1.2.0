@@ -1310,7 +1310,15 @@ do_stat:
 	break;
 
     case TARGET_FREEBSD_NR_chdir:
-    /* case TARGET_FREEBSD_NR_fchdir: */
+	if (!(p = lock_user_string(arg1)))
+		goto efault;
+	ret = get_errno(chdir(p));
+	unlock_user(p, arg1, 0);
+	break;
+
+    case TARGET_FREEBSD_NR_fchdir:
+	ret = get_errno(fchdir(arg1));
+	break;
 
     case TARGET_FREEBSD_NR_rename:
     case TARGET_FREEBSD_NR_renameat:
