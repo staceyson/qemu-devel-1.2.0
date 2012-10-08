@@ -1351,10 +1351,51 @@ do_stat:
 	break;
 
     case TARGET_FREEBSD_NR_link:
+	{
+		void * p2;
+
+		p = lock_user_string(arg1);
+		p2 = lock_user_string(arg2);
+		if (!p || !p2)
+			ret = -TARGET_EFAULT;
+		else
+			ret = get_errno(link(p, p2));
+		unlock_user(p2, arg2, 0);
+		unlock_user(p, arg1, 0);
+	}
+	break;
+
     case TARGET_FREEBSD_NR_linkat:
+	{
+		void * p2 = NULL;
+
+		if (!arg2 || !arg4)
+			goto efault;
+
+		p  = lock_user_string(arg2);
+		p2 = lock_user_string(arg4);
+		if (!p || !p2)
+			ret = -TARGET_EFAULT;
+		else
+			ret = get_errno(linkat(arg1, p, arg3, p2, arg5));
+		unlock_user(p, arg2, 0);
+		unlock_user(p2, arg4, 0);
+	}
+	break;
 
     case TARGET_FREEBSD_NR_unlink:
+	if (!(p = lock_user_string(arg1)))
+		goto efault;
+	ret = get_errno(unlink(p));
+	unlock_user(p, arg1, 0);
+	break;
+
     case TARGET_FREEBSD_NR_unlinkat:
+	if (!(p = lock_user_string(arg2)))
+		goto efault;
+	ret = get_errno(unlinkat(arg1, p, arg3));
+	unlock_user(p, arg2, 0);
+	break;
 
     case TARGET_FREEBSD_NR_mkdir:
     case TARGET_FREEBSD_NR_mkdirat:
