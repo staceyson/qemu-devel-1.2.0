@@ -34,6 +34,7 @@
 #include <sys/resource.h>
 #include <sys/sysctl.h>
 #include <sys/event.h>
+#include <sys/mount.h>
 #include <utime.h>
 
 #include "qemu.h"
@@ -1434,9 +1435,54 @@ do_stat:
 	 break;
 
     case TARGET_FREEBSD_NR_sync:
+	 sync();
+	 ret = 0;
+	 break;
+
     case TARGET_FREEBSD_NR_mount:
+	 {
+		 void *p2;
+
+		 /* We need to look at the data field. */
+		 p = lock_user_string(arg1);	/* type */
+		 p2 = lock_user_string(arg2);	/* dir */
+		 if (!p || !p2)
+			 ret = -TARGET_EFAULT;
+		 else {
+			 /*
+			  * XXX arg5 should be locked, but it isn't clear
+			  * how to do that since it's it may be not be a
+			  * NULL-terminated string.
+			  */
+			 if ( ! arg5 )
+				 ret = get_errno(mount(p, p2, arg3, NULL));
+			 else
+				 ret = get_errno(mount(p, p2, arg3, g2h(arg5)));
+		 }
+		 unlock_user(p, arg1, 0);
+		 unlock_user(p2, arg1, 0);
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_unmount:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(unmount(p, arg2));
+	 unlock_user(p, arg1, 0);
+	 break;
+
     case TARGET_FREEBSD_NR_nmount:
+	 {
+		 int count = arg2;
+		 struct iovec *vec;
+
+		 vec = alloca(count * sizeof(struct iovec));
+		 if (lock_iovec(VERIFY_READ, vec, arg2, count, 1) < 0)
+			 goto efault;
+		 ret = get_errno(nmount(vec, count, arg3));
+		 unlock_iovec(vec, arg2, count, 0);
+	 }
+	 break;
 
     case TARGET_FREEBSD_NR_ioctl:
     case TARGET_FREEBSD_NR_fcntl:
