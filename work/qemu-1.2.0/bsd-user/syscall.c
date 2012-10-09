@@ -2559,6 +2559,25 @@ do_stat:
 	 ret = do_socketpair(arg1, arg2, arg3, arg4);
 	 break;
 
+    case TARGET_FREEBSD_NR_getpriority:
+	 /*
+	  * Note that negative values are valid for getpriority, so we must
+	  * differentiate based on errno settings.
+	  */
+	 errno = 0;
+	 ret = getpriority(arg1, arg2);
+	 if (ret == -1 && errno != 0) {
+		 ret = -host_to_target_errno(errno);
+		 break;
+	 }
+	 /* Return value is a biased priority to avoid negative numbers. */
+	 ret = 20 - ret;
+	 break;
+
+    case TARGET_FREEBSD_NR_setpriority:
+	 ret = get_errno(setpriority(arg1, arg2, arg3));
+	 break;
+
     case TARGET_FREEBSD_NR_kill:
     case TARGET_FREEBSD_NR_sigaction:
     case TARGET_FREEBSD_NR_sigprocmask:
@@ -2571,9 +2590,6 @@ do_stat:
 
     case TARGET_FREEBSD_NR_reboot:
     case TARGET_FREEBSD_NR_shutdown:
-
-    case TARGET_FREEBSD_NR_getpriority:
-    case TARGET_FREEBSD_NR_setpriority:
 
     case TARGET_FREEBSD_NR_swapon:
     case TARGET_FREEBSD_NR_swapoff:
