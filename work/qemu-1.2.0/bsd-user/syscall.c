@@ -59,6 +59,13 @@ static inline abi_long get_errno(abi_long ret)
         return ret;
 }
 
+static inline int
+host_to_target_errno(int err)
+{
+	/* XXX need to translate host errnos here */
+	return (err);
+}
+
 #define target_to_host_bitmask(x, tbl) (x)
 
 static inline int is_error(abi_long ret)
@@ -2207,6 +2214,25 @@ do_stat:
 	 ret = get_errno(dup2(arg1, arg2));
 	 break;
 
+    case TARGET_FREEBSD_NR_truncate:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 if (regpairs_aligned(cpu_env)) {
+		 arg2 = arg3;
+		 arg3 = arg4;
+	 }
+	 ret = truncate(p, target_offset64(arg2, arg3));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_ftruncate:
+	 if (regpairs_aligned(cpu_env)) {
+		 arg2 = arg3;
+		 arg3 = arg4;
+	 }
+	 ret = ftruncate(arg1, target_offset64(arg2, arg3));
+	 break;
+
     case TARGET_FREEBSD_NR_acct:
 	 if (arg1 == 0) {
 		 ret = get_errno(acct(NULL));
@@ -2618,9 +2644,6 @@ do_stat:
     case TARGET_FREEBSD_NR_fork:
     case TARGET_FREEBSD_NR_rfork:
     case TARGET_FREEBSD_NR_vfork:
-
-    case TARGET_FREEBSD_NR_truncate:
-    case TARGET_FREEBSD_NR_ftruncate:
 
     case TARGET_FREEBSD_NR_getgroups:
     case TARGET_FREEBSD_NR_setgroups:
