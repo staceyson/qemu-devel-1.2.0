@@ -35,6 +35,7 @@
 #include <sys/sysctl.h>
 #include <sys/event.h>
 #include <sys/mount.h>
+#include <sys/wait.h>
 #include <utime.h>
 
 #include "qemu.h"
@@ -467,6 +468,54 @@ target_to_host_fcntl_cmd(int cmd)
 	default:
 		return (cmd);
 	}
+}
+
+static inline abi_long
+host_to_target_rusage(abi_ulong target_addr, const struct rusage *rusage)
+{
+	struct target_rusage *target_rusage;
+
+	if (!lock_user_struct(VERIFY_WRITE, target_rusage, target_addr, 0))
+		return (-TARGET_EFAULT);
+	target_rusage->ru_utime.tv_sec = tswapal(rusage->ru_utime.tv_sec);
+	target_rusage->ru_utime.tv_usec = tswapal(rusage->ru_utime.tv_usec);
+	target_rusage->ru_stime.tv_sec = tswapal(rusage->ru_stime.tv_sec);
+	target_rusage->ru_stime.tv_usec = tswapal(rusage->ru_stime.tv_usec);
+	target_rusage->ru_maxrss = tswapal(rusage->ru_maxrss);
+	target_rusage->ru_ixrss = tswapal(rusage->ru_ixrss);
+	target_rusage->ru_idrss = tswapal(rusage->ru_idrss);
+	target_rusage->ru_isrss = tswapal(rusage->ru_isrss);
+	target_rusage->ru_minflt = tswapal(rusage->ru_minflt);
+	target_rusage->ru_majflt = tswapal(rusage->ru_majflt);
+	target_rusage->ru_nswap = tswapal(rusage->ru_nswap);
+	target_rusage->ru_inblock = tswapal(rusage->ru_inblock);
+	target_rusage->ru_oublock = tswapal(rusage->ru_oublock);
+	target_rusage->ru_msgsnd = tswapal(rusage->ru_msgsnd);
+	target_rusage->ru_msgrcv = tswapal(rusage->ru_msgrcv);
+	target_rusage->ru_nsignals = tswapal(rusage->ru_nsignals);
+	target_rusage->ru_nvcsw = tswapal(rusage->ru_nvcsw);
+	target_rusage->ru_nivcsw = tswapal(rusage->ru_nivcsw);
+	unlock_user_struct(target_rusage, target_addr, 1);
+
+	return (0);
+}
+
+/*
+ * Map host to target signal numbers for the wait family of syscalls.
+ * Assume all other status bits are the same.
+ */
+static int
+host_to_target_waitstatus(int status)
+{
+	if (WIFSIGNALED(status)) {
+		return (host_to_target_signal(WTERMSIG(status)) |
+		    (status & ~0x7f));
+	}
+	if (WIFSTOPPED(status)) {
+		return (host_to_target_signal(WSTOPSIG(status)) << 8) |
+		    (status & 0xff);
+	}
+	return (status);
 }
 
 static inline abi_long
@@ -1741,6 +1790,37 @@ do_stat:
 	 unlock_user(p, arg1, 0);
 	 break;
 
+    case TARGET_FREEBSD_NR_getrusage:
+	 {
+		 struct rusage rusage;
+		 ret = get_errno(getrusage(arg1, &rusage));
+		 if (!is_error(ret))
+			 host_to_target_rusage(arg2, &rusage);
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR_wait4:
+	 {
+		 int status;
+		 abi_long status_ptr = arg2;
+		 struct rusage rusage, *rusage_ptr;
+		 abi_ulong target_rusage = arg4;
+
+		 if (target_rusage)
+			 rusage_ptr = &rusage;
+		 else
+			 rusage_ptr = NULL;
+		 ret = get_errno(wait4(arg1, &status, arg3, rusage_ptr));
+		 if (!is_error(ret)) {
+			 status = host_to_target_waitstatus(status);
+			 if (put_user_s32(status, status_ptr))
+				 goto efault;
+			 if (target_rusage)
+				 host_to_target_rusage(target_rusage, &rusage);
+		 }
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_kill:
     case TARGET_FREEBSD_NR_sigaction:
     case TARGET_FREEBSD_NR_sigprocmask:
@@ -1748,7 +1828,6 @@ do_stat:
     case TARGET_FREEBSD_NR_sigsuspend:
     case TARGET_FREEBSD_NR_sigreturn:
 
-    case TARGET_FREEBSD_NR_getrusage:
 
     case TARGET_FREEBSD_NR_pselect:
 
@@ -1771,8 +1850,6 @@ do_stat:
     case TARGET_FREEBSD_NR_sendto:
     /* case TARGET_FREEBSD_NR_socket: */
     case TARGET_FREEBSD_NR_socketpair:
-
-    case TARGET_FREEBSD_NR_wait4:
 
     case TARGET_FREEBSD_NR_swapon:
     case TARGET_FREEBSD_NR_swapoff:

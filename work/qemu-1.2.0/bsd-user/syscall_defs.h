@@ -213,6 +213,25 @@ typedef struct {
 	abi_ulong sig[TARGET_NSIG_WORDS];
 } target_sigset_t;
 
+struct target_rusage {
+	struct target_timeval ru_utime;	/* user time used */
+	struct target_timeval ru_stime;	/* system time used */
+	abi_long    ru_maxrss;		/* maximum resident set size */
+	abi_long    ru_ixrss;		/* integral shared memory size */
+	abi_long    ru_idrss;		/* integral unshared data size */
+	abi_long    ru_isrss;		/* integral unshared stack size */
+	abi_long    ru_minflt;		/* page reclaims */
+	abi_long    ru_majflt;		/* page faults */
+	abi_long    ru_nswap;		/* swaps */
+	abi_long    ru_inblock;		/* block input operations */
+	abi_long    ru_oublock;		/* block output operations */
+	abi_long    ru_msgsnd;		/* messages sent */
+	abi_long    ru_msgrcv;		/* messages received */
+	abi_long    ru_nsignals;	/* signals received */
+	abi_long    ru_nvcsw;		/* voluntary context switches */
+	abi_long    ru_nivcsw;		/* involuntary context switches */
+};
+
 #ifdef BSWAP_NEEDED
 static inline void
 tswap_sigset(target_sigset_t *d, const target_sigset_t *s)

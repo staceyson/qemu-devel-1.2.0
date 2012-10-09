@@ -94,10 +94,9 @@ static uint8_t target_to_host_signal_table[_NSIG];
 static struct target_sigaction sigact_table[TARGET_NSIG];
 
 static void host_signal_handler(int host_signum, siginfo_t *info, void *puc);
-static int host_to_target_signal(int sig);
 static int target_to_host_signal(int sig);
 
-static int
+int
 host_to_target_signal(int sig)
 {
 
