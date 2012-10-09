@@ -178,6 +178,7 @@ struct target_rlimit {
 #define	TARGET_O_ASYNC		0x00000040
 #define	TARGET_O_DIRECT		0x00010000
 
+#include "socket.h"
 #include "errno_defs.h"
 
 #include "freebsd/syscall_nr.h"
@@ -197,6 +198,59 @@ struct target_iovec {
     abi_long iov_base;   /* Starting address */
     abi_long iov_len;   /* Number of bytes */
 };
+
+struct target_msghdr {
+	abi_long	msg_name;       /* Socket name */
+	int		msg_namelen;    /* Length of name */
+	abi_long	msg_iov;        /* Data blocks */
+	abi_long	msg_iovlen;     /* Number of blocks */
+	abi_long	msg_control;    /* Per protocol magic
+					   (eg BSD file descriptor passing) */
+	abi_long	msg_controllen; /* Length of cmsg list */
+	int		msg_flags;	/* flags on received message */
+};
+
+struct target_cmsghdr {
+	abi_long	cmsg_len;
+	int		cmsg_level;
+	int		cmsg_type;
+};
+
+#define TARGET_CMSG_DATA(cmsg)	\
+    ((unsigned char *) ((struct target_cmsghdr *) (cmsg) + 1))
+#define	TARGET_CMSG_NXTHDR(mhdr, cmsg) __target_cmsg_nxthdr (mhdr, cmsg)
+#define	TARGET_CMSG_ALIGN(len) (((len) + sizeof (abi_long) - 1) \
+    & (size_t) ~(sizeof (abi_long) - 1))
+#define	TARGET_CMSG_SPACE(len) (TARGET_CMSG_ALIGN (len) \
+    + TARGET_CMSG_ALIGN (sizeof (struct target_cmsghdr)))
+#define TARGET_CMSG_LEN(len)  \
+    (TARGET_CMSG_ALIGN (sizeof (struct target_cmsghdr)) + (len))
+
+static __inline__ struct target_cmsghdr *
+__target_cmsg_nxthdr (struct target_msghdr *__mhdr,
+    struct target_cmsghdr *__cmsg)
+{
+	struct target_cmsghdr *__ptr;
+
+	__ptr = (struct target_cmsghdr *)((unsigned char *) __cmsg +
+	    TARGET_CMSG_ALIGN (tswapal(__cmsg->cmsg_len)));
+	if ((unsigned long)((char *)(__ptr+1) -
+		(char *)(size_t)tswapal(__mhdr->msg_control)) >
+	    tswapal(__mhdr->msg_controllen))
+		/* No more entries.  */
+		return ((struct target_cmsghdr *)0);
+	return (__cmsg);
+}
+
+struct target_sockaddr {
+	uint16_t sa_family;
+	uint8_t sa_data[14];
+};
+
+struct target_in_addr {
+	uint32_t s_addr; /* big endian */
+};
+
 
 struct target_timeval {
 	abi_long tv_sec;

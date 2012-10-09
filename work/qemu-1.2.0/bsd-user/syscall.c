@@ -36,7 +36,11 @@
 #include <sys/event.h>
 #include <sys/mount.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <utime.h>
+
+#include <netinet/in.h>
 
 #include "qemu.h"
 #include "qemu-common.h"
@@ -338,6 +342,179 @@ static abi_long unlock_iovec(struct iovec *vec, abi_ulong target_addr,
     unlock_user (target_vec, target_addr, 0);
 
     return 0;
+}
+
+static inline abi_long
+target_to_host_sockaddr(struct sockaddr *addr, abi_ulong target_addr,
+    socklen_t len)
+{
+	const socklen_t unix_maxlen = sizeof (struct sockaddr_un);
+	sa_family_t sa_family;
+	struct target_sockaddr *target_saddr;
+
+	target_saddr = lock_user(VERIFY_READ, target_addr, len, 1);
+	if (!target_saddr)
+		return -TARGET_EFAULT;
+
+	sa_family = tswap16(target_saddr->sa_family);
+
+	/*
+	 * Oops. The caller might send a incomplete sun_path; sun_path
+	 * must be terminated by \0 (see the manual page), but unfortunately
+	 * it is quite common to specify sockaddr_un length as
+	 * "strlen(x->sun_path)" while it should be "strlen(...) + 1". We will
+	 * fix that here if needed.
+	 */
+	if (sa_family == AF_UNIX) {
+		if (len < unix_maxlen && len > 0) {
+			char *cp = (char*)target_saddr;
+
+			if ( cp[len-1] && !cp[len] )
+				len++;
+		}
+		if (len > unix_maxlen)
+			len = unix_maxlen;
+	}
+
+	memcpy(addr, target_saddr, len);
+	addr->sa_family = sa_family;
+	unlock_user(target_saddr, target_addr, 0);
+
+	return (0);
+}
+
+static inline abi_long
+host_to_target_sockaddr(abi_ulong target_addr, struct sockaddr *addr,
+    socklen_t len)
+{
+	struct target_sockaddr *target_saddr;
+
+	target_saddr = lock_user(VERIFY_WRITE, target_addr, len, 0);
+	if (!target_saddr)
+		return (-TARGET_EFAULT);
+	memcpy(target_saddr, addr, len);
+	target_saddr->sa_family = tswap16(addr->sa_family);
+	unlock_user(target_saddr, target_addr, len);
+
+	return (0);
+}
+
+static inline abi_long
+target_to_host_cmsg(struct msghdr *msgh, struct target_msghdr *target_msgh)
+{
+	struct cmsghdr *cmsg = CMSG_FIRSTHDR(msgh);
+	abi_long msg_controllen;
+	abi_ulong target_cmsg_addr;
+	struct target_cmsghdr *target_cmsg;
+	socklen_t space = 0;
+
+
+	msg_controllen = tswapal(target_msgh->msg_controllen);
+	if (msg_controllen < sizeof (struct target_cmsghdr))
+		goto the_end;
+	target_cmsg_addr = tswapal(target_msgh->msg_control);
+	target_cmsg = lock_user(VERIFY_READ, target_cmsg_addr,
+	    msg_controllen, 1);
+	if (!target_cmsg)
+		return (-TARGET_EFAULT);
+	while (cmsg && target_cmsg) {
+		void *data = CMSG_DATA(cmsg);
+		void *target_data = TARGET_CMSG_DATA(target_cmsg);
+		int len = tswapal(target_cmsg->cmsg_len) -
+		    TARGET_CMSG_ALIGN(sizeof (struct target_cmsghdr));
+		space += CMSG_SPACE(len);
+		if (space > msgh->msg_controllen) {
+			space -= CMSG_SPACE(len);
+			gemu_log("Host cmsg overflow\n");
+			break;
+		}
+		cmsg->cmsg_level = tswap32(target_cmsg->cmsg_level);
+		cmsg->cmsg_type = tswap32(target_cmsg->cmsg_type);
+		cmsg->cmsg_len = CMSG_LEN(len);
+
+		if (cmsg->cmsg_level != TARGET_SOL_SOCKET ||
+		    cmsg->cmsg_type != SCM_RIGHTS) {
+			gemu_log("Unsupported ancillary data: %d/%d\n",
+			    cmsg->cmsg_level, cmsg->cmsg_type);
+			memcpy(data, target_data, len);
+		} else {
+			int *fd = (int *)data;
+			int *target_fd = (int *)target_data;
+			int i, numfds = len / sizeof(int);
+
+			for (i = 0; i < numfds; i++)
+				fd[i] = tswap32(target_fd[i]);
+		}
+		cmsg = CMSG_NXTHDR(msgh, cmsg);
+		target_cmsg = TARGET_CMSG_NXTHDR(target_msgh, target_cmsg);
+	}
+	unlock_user(target_cmsg, target_cmsg_addr, 0);
+
+the_end:
+	msgh->msg_controllen = space;
+	return (0);
+}
+
+static inline abi_long
+host_to_target_cmsg(struct target_msghdr *target_msgh, struct msghdr *msgh)
+{
+	struct cmsghdr *cmsg = CMSG_FIRSTHDR(msgh);
+	abi_long msg_controllen;
+	abi_ulong target_cmsg_addr;
+	struct target_cmsghdr *target_cmsg;
+	socklen_t space = 0;
+
+	msg_controllen = tswapal(target_msgh->msg_controllen);
+	if (msg_controllen < sizeof (struct target_cmsghdr))
+		goto the_end;
+	target_cmsg_addr = tswapal(target_msgh->msg_control);
+	target_cmsg = lock_user(VERIFY_WRITE, target_cmsg_addr,
+	    msg_controllen, 0);
+	if (!target_cmsg)
+		return (-TARGET_EFAULT);
+	while (cmsg && target_cmsg) {
+		void *data = CMSG_DATA(cmsg);
+		void *target_data = TARGET_CMSG_DATA(target_cmsg);
+		int len = cmsg->cmsg_len - CMSG_ALIGN(sizeof (struct cmsghdr));
+
+		space += TARGET_CMSG_SPACE(len);
+		if (space > msg_controllen) {
+			space -= TARGET_CMSG_SPACE(len);
+			gemu_log("Target cmsg overflow\n");
+			break;
+		}
+		target_cmsg->cmsg_level = tswap32(cmsg->cmsg_level);
+		target_cmsg->cmsg_type = tswap32(cmsg->cmsg_type);
+		target_cmsg->cmsg_len = tswapal(TARGET_CMSG_LEN(len));
+		if ((cmsg->cmsg_level == TARGET_SOL_SOCKET) &&
+		    (cmsg->cmsg_type == SCM_RIGHTS)) {
+			int *fd = (int *)data;
+			int *target_fd = (int *)target_data;
+			int i, numfds = len / sizeof(int);
+			for (i = 0; i < numfds; i++)
+				target_fd[i] = tswap32(fd[i]);
+		} else if ((cmsg->cmsg_level == TARGET_SOL_SOCKET) &&
+		    (cmsg->cmsg_type == SO_TIMESTAMP) &&
+		    (len == sizeof(struct timeval))) {
+			/* copy struct timeval to target */
+			struct timeval *tv = (struct timeval *)data;
+			struct target_timeval *target_tv =
+			    (struct target_timeval *)target_data;
+			target_tv->tv_sec = tswapal(tv->tv_sec);
+			target_tv->tv_usec = tswapal(tv->tv_usec);
+		} else {
+			gemu_log("Unsupported ancillary data: %d/%d\n",
+			    cmsg->cmsg_level, cmsg->cmsg_type);
+			memcpy(target_data, data, len);
+		}
+		cmsg = CMSG_NXTHDR(msgh, cmsg);
+		target_cmsg = TARGET_CMSG_NXTHDR(target_msgh, target_cmsg);
+	}
+	unlock_user(target_cmsg, target_cmsg_addr, space);
+
+the_end:
+	target_msgh->msg_controllen = tswapal(space);
+	return (0);
 }
 
 static inline rlim_t
@@ -676,6 +853,287 @@ unimplemented(int num)
 	return (-TARGET_ENOSYS);
 }
 
+/* do_bind() must return target values and target errnos. */
+static abi_long
+do_bind(int sockfd, abi_ulong target_addr, socklen_t addrlen)
+{
+	abi_long ret;
+	void *addr;
+
+	if ((int)addrlen < 0)
+		return (-TARGET_EINVAL);
+
+	addr = alloca(addrlen + 1);
+	ret = target_to_host_sockaddr(addr, target_addr, addrlen);
+	if (ret)
+		return (ret);
+
+	return get_errno(bind(sockfd, addr, addrlen));
+}
+
+/* do_connect() must return target values and target errnos. */
+static abi_long
+do_connect(int sockfd, abi_ulong target_addr, socklen_t addrlen)
+{
+	abi_long ret;
+	void *addr;
+
+	if ((int)addrlen < 0)
+		return (-TARGET_EINVAL);
+
+	addr = alloca(addrlen);
+
+	ret = target_to_host_sockaddr(addr, target_addr, addrlen);
+
+	if (ret)
+		return (ret);
+
+	return (get_errno(connect(sockfd, addr, addrlen)));
+}
+
+/* do_sendrecvmsg() must return target values and target errnos. */
+static abi_long
+do_sendrecvmsg(int fd, abi_ulong target_msg, int flags, int send)
+{
+	abi_long ret, len;
+	struct target_msghdr *msgp;
+	struct msghdr msg;
+	int count;
+	struct iovec *vec;
+	abi_ulong target_vec;
+
+	if (!lock_user_struct(send ? VERIFY_READ : VERIFY_WRITE, msgp,
+		target_msg, send ? 1 : 0))
+		return (-TARGET_EFAULT);
+	if (msgp->msg_name) {
+		msg.msg_namelen = tswap32(msgp->msg_namelen);
+		msg.msg_name = alloca(msg.msg_namelen);
+		ret = target_to_host_sockaddr(msg.msg_name,
+		    tswapal(msgp->msg_name), msg.msg_namelen);
+
+		if (ret) {
+			unlock_user_struct(msgp, target_msg, send ? 0 : 1);
+			return (ret);
+		}
+	} else {
+		msg.msg_name = NULL;
+		msg.msg_namelen = 0;
+	}
+	msg.msg_controllen = 2 * tswapal(msgp->msg_controllen);
+	msg.msg_control = alloca(msg.msg_controllen);
+	msg.msg_flags = tswap32(msgp->msg_flags);
+
+	count = tswapal(msgp->msg_iovlen);
+	vec = alloca(count * sizeof(struct iovec));
+	target_vec = tswapal(msgp->msg_iov);
+	lock_iovec(send ? VERIFY_READ : VERIFY_WRITE, vec, target_vec, count,
+	    send);
+	msg.msg_iovlen = count;
+	msg.msg_iov = vec;
+
+	if (send) {
+		ret = target_to_host_cmsg(&msg, msgp);
+		if (0 == ret)
+			ret = get_errno(sendmsg(fd, &msg, flags));
+	} else {
+		ret = get_errno(recvmsg(fd, &msg, flags));
+		if (!is_error(ret)) {
+			len = ret;
+			ret = host_to_target_cmsg(msgp, &msg);
+			if (!is_error(ret)) {
+				msgp->msg_namelen = tswap32(msg.msg_namelen);
+				if (msg.msg_name != NULL) {
+					ret = host_to_target_sockaddr(
+					    tswapal(msgp->msg_name),
+					    msg.msg_name, msg.msg_namelen);
+					if (ret)
+						goto out;
+				}
+			}
+			ret = len;
+		}
+	}
+out:
+	unlock_iovec(vec, target_vec, count, !send);
+	unlock_user_struct(msgp, target_msg, send ? 0 : 1);
+	return (ret);
+}
+
+/* do_accept() must return target values and target errnos. */
+static abi_long
+do_accept(int fd, abi_ulong target_addr, abi_ulong target_addrlen_addr)
+{
+	socklen_t addrlen;
+	void *addr;
+	abi_long ret;
+
+	if (target_addr == 0)
+		return get_errno(accept(fd, NULL, NULL));
+
+	/* return EINVAL if addrlen pointer is invalid */
+	if (get_user_u32(addrlen, target_addrlen_addr))
+		return (-TARGET_EINVAL);
+
+	if ((int)addrlen < 0)
+		return (-TARGET_EINVAL);
+
+	if (!access_ok(VERIFY_WRITE, target_addr, addrlen))
+		return -TARGET_EINVAL;
+
+	addr = alloca(addrlen);
+
+	ret = get_errno(accept(fd, addr, &addrlen));
+	if (!is_error(ret)) {
+		host_to_target_sockaddr(target_addr, addr, addrlen);
+		if (put_user_u32(addrlen, target_addrlen_addr))
+			ret = (-TARGET_EFAULT);
+	}
+	return (ret);
+}
+
+/* do_getpeername() must return target values and target errnos. */
+static abi_long
+do_getpeername(int fd, abi_ulong target_addr, abi_ulong target_addrlen_addr)
+{
+	socklen_t addrlen;
+	void *addr;
+	abi_long ret;
+	if (get_user_u32(addrlen, target_addrlen_addr))
+		return (-TARGET_EFAULT);
+	if ((int)addrlen < 0) {
+		return (-TARGET_EINVAL);
+	}
+	if (!access_ok(VERIFY_WRITE, target_addr, addrlen))
+		return (-TARGET_EFAULT);
+	addr = alloca(addrlen);
+	ret = get_errno(getpeername(fd, addr, &addrlen));
+	if (!is_error(ret)) {
+		host_to_target_sockaddr(target_addr, addr, addrlen);
+		if (put_user_u32(addrlen, target_addrlen_addr))
+			ret = (-TARGET_EFAULT);
+	}
+	return (ret);
+}
+
+/* do_getsockname() must return target values and target errnos. */
+static abi_long
+do_getsockname(int fd, abi_ulong target_addr, abi_ulong target_addrlen_addr)
+{
+	socklen_t addrlen;
+	void *addr;
+	abi_long ret;
+
+	if (get_user_u32(addrlen, target_addrlen_addr))
+		return (-TARGET_EFAULT);
+
+	if ((int)addrlen < 0)
+		return (-TARGET_EINVAL);
+
+	if (!access_ok(VERIFY_WRITE, target_addr, addrlen))
+		return (-TARGET_EFAULT);
+
+	addr = alloca(addrlen);
+
+	ret = get_errno(getsockname(fd, addr, &addrlen));
+	if (!is_error(ret)) {
+		host_to_target_sockaddr(target_addr, addr, addrlen);
+		if (put_user_u32(addrlen, target_addrlen_addr))
+			ret = (-TARGET_EFAULT);
+	}
+	return (ret);
+}
+
+/* do_socketpair() must return target values and target errnos. */
+static abi_long
+do_socketpair(int domain, int type, int protocol, abi_ulong target_tab_addr)
+{
+	int tab[2];
+	abi_long ret;
+
+	ret = get_errno(socketpair(domain, type, protocol, tab));
+	if (!is_error(ret)) {
+		if (put_user_s32(tab[0], target_tab_addr)
+		    || put_user_s32(tab[1], target_tab_addr + sizeof(tab[0])))
+			ret = (-TARGET_EFAULT);
+	}
+	return (ret);
+}
+
+/* do_sendto() must return target values and target errnos. */
+static abi_long
+do_sendto(int fd, abi_ulong msg, size_t len, int flags, abi_ulong target_addr,
+    socklen_t addrlen)
+{
+	void *addr;
+	void *host_msg;
+	abi_long ret;
+
+	if ((int)addrlen < 0)
+		return (-TARGET_EINVAL);
+	host_msg = lock_user(VERIFY_READ, msg, len, 1);
+	if (!host_msg)
+		return (-TARGET_EFAULT);
+	if (target_addr) {
+		addr = alloca(addrlen);
+		ret = target_to_host_sockaddr(addr, target_addr, addrlen);
+		if (ret) {
+			unlock_user(host_msg, msg, 0);
+			return (ret);
+		}
+		ret = get_errno(sendto(fd, host_msg, len, flags, addr,
+			addrlen));
+	} else {
+		ret = get_errno(send(fd, host_msg, len, flags));
+	}
+	unlock_user(host_msg, msg, 0);
+	return (ret);
+}
+
+/* do_recvfrom() must return target values and target errnos. */
+static abi_long
+do_recvfrom(int fd, abi_ulong msg, size_t len, int flags, abi_ulong target_addr,
+    abi_ulong target_addrlen)
+{
+	socklen_t addrlen;
+	void *addr;
+	void *host_msg;
+	abi_long ret;
+
+	host_msg = lock_user(VERIFY_WRITE, msg, len, 0);
+	if (!host_msg)
+		return (-TARGET_EFAULT);
+	if (target_addr) {
+		if (get_user_u32(addrlen, target_addrlen)) {
+			ret = -TARGET_EFAULT;
+			goto fail;
+		}
+		if ((int)addrlen < 0) {
+			ret = (-TARGET_EINVAL);
+			goto fail;
+		}
+		addr = alloca(addrlen);
+		ret = get_errno(recvfrom(fd, host_msg, len, flags, addr,
+			&addrlen));
+	} else {
+		addr = NULL; /* To keep compiler quiet.  */
+		ret = get_errno(qemu_recv(fd, host_msg, len, flags));
+	}
+	if (!is_error(ret)) {
+		if (target_addr) {
+			host_to_target_sockaddr(target_addr, addr, addrlen);
+			if (put_user_u32(addrlen, target_addrlen)) {
+				ret = -TARGET_EFAULT;
+				goto fail;
+			}
+		}
+		unlock_user(host_msg, msg, len);
+	} else {
+fail:
+		unlock_user(host_msg, msg, 0);
+	}
+	return (ret);
+}
+
 /* do_freebsd_select() must return target values and target errnos. */
 static abi_long
 do_freebsd_select(int n, abi_ulong rfd_addr, abi_ulong wfd_addr,
@@ -717,6 +1175,230 @@ do_freebsd_select(int n, abi_ulong rfd_addr, abi_ulong wfd_addr,
 		if (target_tv_addr &&
 		    fbsd_copy_to_user_timeval(&tv, target_tv_addr))
 			return (-TARGET_EFAULT);
+	}
+
+	return (ret);
+}
+
+/* do_getsockopt() must return target values and target errnos. */
+static abi_long
+do_getsockopt(int sockfd, int level, int optname, abi_ulong optval_addr,
+    abi_ulong optlen)
+{
+	abi_long ret;
+	int len, val;
+	socklen_t lv;
+
+	switch(level) {
+	case TARGET_SOL_SOCKET:
+		level = SOL_SOCKET;
+		switch (optname) {
+
+		/* These don't just return a single integer */
+		case TARGET_SO_LINGER:
+		case TARGET_SO_RCVTIMEO:
+		case TARGET_SO_SNDTIMEO:
+		case TARGET_SO_ACCEPTFILTER:
+			goto unimplemented;
+
+		/* Options with 'int' argument.  */
+		case TARGET_SO_DEBUG:
+			optname = SO_DEBUG;
+			goto int_case;
+
+		case TARGET_SO_REUSEADDR:
+			optname = SO_REUSEADDR;
+			goto int_case;
+
+		case TARGET_SO_REUSEPORT:
+			optname = SO_REUSEPORT;
+			goto int_case;
+
+		case TARGET_SO_TYPE:
+			optname = SO_TYPE;
+			goto int_case;
+
+		case TARGET_SO_ERROR:
+			optname = SO_ERROR;
+			goto int_case;
+
+		case TARGET_SO_DONTROUTE:
+			optname = SO_DONTROUTE;
+			goto int_case;
+
+		case TARGET_SO_BROADCAST:
+			optname = SO_BROADCAST;
+			goto int_case;
+
+		case TARGET_SO_SNDBUF:
+			optname = SO_SNDBUF;
+			goto int_case;
+
+		case TARGET_SO_RCVBUF:
+			optname = SO_RCVBUF;
+			goto int_case;
+
+		case TARGET_SO_KEEPALIVE:
+			optname = SO_KEEPALIVE;
+			goto int_case;
+
+		case TARGET_SO_OOBINLINE:
+			optname = SO_OOBINLINE;
+			goto int_case;
+
+		case TARGET_SO_TIMESTAMP:
+			optname = SO_TIMESTAMP;
+			goto int_case;
+
+		case TARGET_SO_RCVLOWAT:
+			optname = SO_RCVLOWAT;
+			goto int_case;
+
+		case TARGET_SO_LISTENINCQLEN:
+			optname = SO_LISTENINCQLEN;
+			goto int_case;
+
+		default:
+int_case:
+			if (get_user_u32(len, optlen))
+				return (-TARGET_EFAULT);
+			if (len < 0)
+				return (-TARGET_EINVAL);
+			lv = sizeof(lv);
+			ret = get_errno(getsockopt(sockfd, level, optname,
+				&val, &lv));
+			if (ret < 0)
+				return (ret);
+			if (len > lv)
+				len = lv;
+			if (len == 4) {
+				if (put_user_u32(val, optval_addr))
+					return (-TARGET_EFAULT);
+			} else {
+				if (put_user_u8(val, optval_addr))
+					return (-TARGET_EFAULT);
+			}
+			if (put_user_u32(len, optlen))
+				return (-TARGET_EFAULT);
+			break;
+
+		}
+		break;
+
+	default:
+unimplemented:
+		gemu_log("getsockopt level=%d optname=%d not yet supported\n",
+		    level, optname);
+		ret = -TARGET_EOPNOTSUPP;
+		break;
+	}
+	return (ret);
+}
+
+/* do_setsockopt() must return target values and target errnos. */
+static abi_long
+do_setsockopt(int sockfd, int level, int optname, abi_ulong optval_addr,
+    socklen_t optlen)
+{
+	abi_long ret;
+
+	switch(level) {
+	case TARGET_SOL_SOCKET:
+		switch (optname) {
+		/* Options with 'int' argument.  */
+		case TARGET_SO_DEBUG:
+			optname = SO_DEBUG;
+			break;
+
+		case TARGET_SO_REUSEADDR:
+			optname = SO_REUSEADDR;
+			break;
+
+		case TARGET_SO_REUSEPORT:
+			optname = SO_REUSEADDR;
+			break;
+
+		case TARGET_SO_KEEPALIVE:
+			optname = SO_KEEPALIVE;
+			break;
+
+		case TARGET_SO_DONTROUTE:
+			optname = SO_DONTROUTE;
+			break;
+
+		case TARGET_SO_LINGER:
+			optname = SO_LINGER;
+			break;
+
+		case TARGET_SO_BROADCAST:
+			optname = SO_BROADCAST;
+			break;
+
+		case TARGET_SO_OOBINLINE:
+			optname = SO_OOBINLINE;
+			break;
+
+		case TARGET_SO_SNDBUF:
+			optname = SO_SNDBUF;
+			break;
+
+		case TARGET_SO_RCVBUF:
+			optname = SO_RCVBUF;
+			break;
+
+		case TARGET_SO_SNDLOWAT:
+			optname = SO_RCVLOWAT;
+			break;
+
+		case TARGET_SO_RCVLOWAT:
+			optname = SO_RCVLOWAT;
+			break;
+
+		case TARGET_SO_SNDTIMEO:
+			optname = SO_SNDTIMEO;
+			break;
+
+		case TARGET_SO_RCVTIMEO:
+			optname = SO_RCVTIMEO;
+			break;
+
+		case TARGET_SO_ACCEPTFILTER:
+			goto unimplemented;
+
+		case TARGET_SO_NOSIGPIPE:
+			optname = SO_NOSIGPIPE;
+			break;
+
+		case TARGET_SO_TIMESTAMP:
+			optname = SO_TIMESTAMP;
+			break;
+
+		case TARGET_SO_BINTIME:
+			optname = SO_BINTIME;
+			break;
+
+		case TARGET_SO_ERROR:
+			optname = SO_ERROR;
+			break;
+
+		case TARGET_SO_SETFIB:
+			optname = SO_ERROR;
+			break;
+
+		case TARGET_SO_USER_COOKIE:
+			optname = SO_USER_COOKIE;
+			break;
+
+		default:
+			goto unimplemented;
+		}
+		break;
+
+	default:
+unimplemented:
+	gemu_log("Unsupported setsockopt level=%d optname=%d\n",
+	    level, optname);
+	ret = -TARGET_ENOPROTOOPT;
 	}
 
 	return (ret);
@@ -1821,6 +2503,62 @@ do_stat:
 	 }
 	 break;
 
+    case TARGET_FREEBSD_NR_accept:
+	 ret = do_accept(arg1, arg2, arg3);
+	 break;
+
+    case TARGET_FREEBSD_NR_bind:
+	 ret = do_bind(arg1, arg2, arg3);
+	 break;
+
+    case TARGET_FREEBSD_NR_connect:
+	 ret = do_connect(arg1, arg2, arg3);
+	 break;
+
+    case TARGET_FREEBSD_NR_getpeername:
+	 ret = do_getpeername(arg1, arg2, arg3);
+	 break;
+
+    case TARGET_FREEBSD_NR_getsockname:
+	 ret = do_getsockname(arg1, arg2, arg3);
+	 break;
+
+    case TARGET_FREEBSD_NR_getsockopt:
+	 ret = do_getsockopt(arg1, arg2, arg3, arg4, arg5);
+	 break;
+
+    case TARGET_FREEBSD_NR_setsockopt:
+	 ret = do_setsockopt(arg1, arg2, arg3, arg4, arg5);
+	 break;
+
+    case TARGET_FREEBSD_NR_listen:
+	 ret = get_errno(listen(arg1, arg2));
+	 break;
+
+    case TARGET_FREEBSD_NR_recvfrom:
+	 ret = do_recvfrom(arg1, arg2, arg3, arg4, arg5, arg6);
+	 break;
+
+    case TARGET_FREEBSD_NR_recvmsg:
+	 ret = do_sendrecvmsg(arg1, arg2, arg3, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_sendmsg:
+	 ret = do_sendrecvmsg(arg1, arg2, arg3, 1);
+	 break;
+
+    case TARGET_FREEBSD_NR_sendto:
+	 ret = do_sendto(arg1, arg2, arg3, arg4, arg5, arg6);
+	 break;
+
+    case TARGET_FREEBSD_NR_socket:
+	 ret = get_errno(socket(arg1, arg2, arg3));
+	 break;
+
+    case TARGET_FREEBSD_NR_socketpair:
+	 ret = do_socketpair(arg1, arg2, arg3, arg4);
+	 break;
+
     case TARGET_FREEBSD_NR_kill:
     case TARGET_FREEBSD_NR_sigaction:
     case TARGET_FREEBSD_NR_sigprocmask:
@@ -1836,20 +2574,6 @@ do_stat:
 
     case TARGET_FREEBSD_NR_getpriority:
     case TARGET_FREEBSD_NR_setpriority:
-
-    case TARGET_FREEBSD_NR_accept:
-    case TARGET_FREEBSD_NR_bind:
-    case TARGET_FREEBSD_NR_connect:
-    case TARGET_FREEBSD_NR_getpeername:
-    case TARGET_FREEBSD_NR_getsockname:
-    case TARGET_FREEBSD_NR_getsockopt:
-    /* case TARGET_FREEBSD_NR_listen: */
-    case TARGET_FREEBSD_NR_recvfrom:
-    case TARGET_FREEBSD_NR_recvmsg:
-    case TARGET_FREEBSD_NR_sendmsg:
-    case TARGET_FREEBSD_NR_sendto:
-    /* case TARGET_FREEBSD_NR_socket: */
-    case TARGET_FREEBSD_NR_socketpair:
 
     case TARGET_FREEBSD_NR_swapon:
     case TARGET_FREEBSD_NR_swapoff:
