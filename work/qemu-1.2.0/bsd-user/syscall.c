@@ -706,6 +706,7 @@ static inline abi_long
 fbsd_copy_from_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
 {
      struct target_freebsd_timeval *target_tv;
+
      if (!lock_user_struct(VERIFY_READ, target_tv, target_tv_addr, 0))
 		return -TARGET_EFAULT;
    __get_user(tv->tv_sec, &target_tv->tv_sec);
@@ -715,9 +716,10 @@ fbsd_copy_from_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
 }
 
 static inline abi_long
-fbsd_copy_from_user_timespec(struct timespec *ts, abi_ulong target_ts_addr)
+target_to_host_timespec(struct timespec *ts, abi_ulong target_ts_addr)
 {
      struct target_freebsd_timespec *target_ts;
+
      if (!lock_user_struct(VERIFY_READ, target_ts, target_ts_addr, 0))
 		return -TARGET_EFAULT;
    __get_user(ts->tv_sec, &target_ts->tv_sec);
@@ -730,6 +732,7 @@ static inline abi_long
 fbsd_copy_to_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
 {
      struct target_freebsd_timeval *target_tv;
+
      if (!lock_user_struct(VERIFY_WRITE, target_tv, target_tv_addr, 0))
 		return -TARGET_EFAULT;
    __put_user(tv->tv_sec, &target_tv->tv_sec);
@@ -739,9 +742,10 @@ fbsd_copy_to_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
 }
 
 static inline abi_long
-fbsd_copy_to_user_timespec(struct timespec *ts, abi_ulong target_ts_addr)
+host_to_target_timespec(abi_ulong target_ts_addr, struct timespec *ts)
 {
      struct target_freebsd_timespec *target_ts;
+
      if (!lock_user_struct(VERIFY_WRITE, target_ts, target_ts_addr, 0))
 		return -TARGET_EFAULT;
    __put_user(ts->tv_sec, &target_ts->tv_sec);
@@ -1645,13 +1649,24 @@ do_stat:
 	}
         break;
 
+    case TARGET_FREEBSD_NR_nanosleep:
+	 {
+		 struct timespec req, rem;
+
+		 target_to_host_timespec(&req, arg1);
+		 ret = get_errno(nanosleep(&req, &rem));
+		 if (is_error(ret) && arg2)
+			 host_to_target_timespec(arg2, &rem);
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_clock_gettime:
 	{
 		struct timespec ts;
 
 		ret = get_errno(clock_gettime(arg1, &ts));
 		if (!is_error(ret)) {
-			if (fbsd_copy_to_user_timespec(&ts, arg2))
+			if (host_to_target_timespec(arg2, &ts))
 				goto efault;
 		}
     	}
@@ -1660,9 +1675,10 @@ do_stat:
    case TARGET_FREEBSD_NR_clock_getres:
 	{
 		struct timespec ts;
+
 		ret = get_errno(clock_getres(arg1, &ts));
 		if (!is_error(ret)) {
-			if (fbsd_copy_to_user_timespec(&ts, arg2))
+			if (host_to_target_timespec(arg2, &ts))
 				goto efault;
 		}
 	}
@@ -1671,7 +1687,8 @@ do_stat:
     case TARGET_FREEBSD_NR_clock_settime:
 	{
 		struct timespec ts;
-		if (fbsd_copy_from_user_timespec(&ts, arg2) != 0)
+
+		if (target_to_host_timespec(&ts, arg2) != 0)
 			goto efault;
 		ret = get_errno(clock_settime(arg1, &ts));
 	}
@@ -1752,7 +1769,7 @@ do_stat:
            if (arg5 != 0)
               eventlist = alloca(sizeof(struct kevent) * arg5);
            if (arg6 != 0)
-              if (fbsd_copy_from_user_timespec(&ts, arg6))
+              if (target_to_host_timespec(&ts, arg6))
                 goto efault;
            ret = get_errno(kevent(arg1, changelist, arg3, eventlist, arg5,
               arg6 != 0 ? &ts : NULL));
@@ -2206,6 +2223,13 @@ do_stat:
 	 unlock_user(p, arg1, 0);
 	 break;
 
+    case TARGET_FREEBSD_NR___getcwd:
+	 if (!(p = lock_user(VERIFY_WRITE, arg1, arg2, 0)))
+		 goto efault;
+	 ret = get_errno(__getcwd(p, arg2));
+	 unlock_user(p, arg1, ret);
+	 break;
+
     case TARGET_FREEBSD_NR_dup:
 	 ret = get_errno(dup(arg1));
 	 break;
@@ -2634,10 +2658,6 @@ do_stat:
     case TARGET_FREEBSD_NR_getdirentries:
 
     case TARGET_FREEBSD_NR_poll:
-
-    case TARGET_FREEBSD_NR_nanosleep:
-
-    /* case TARGET_FREEBSD_NR___getcwd: */
 
     case TARGET_FREEBSD_NR_sendfile:
 

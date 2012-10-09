@@ -449,3 +449,4 @@ struct target_freebsd_stat {
 	unsigned int :(8 / 2) * (16 - (int)sizeof(struct timespec));
 } __packed;
 
+int __getcwd(char *, size_t);
