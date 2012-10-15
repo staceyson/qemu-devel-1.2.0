@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <string.h>
+#include <dirent.h>
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -2515,6 +2516,63 @@ do_stat:
 	 }
 	 break;
 
+    case TARGET_FREEBSD_NR_getdents:
+	 {
+		 struct dirent *dirp;
+		 int32_t nbytes =  arg3;
+
+		 if (!(dirp = lock_user(VERIFY_WRITE, arg2, nbytes, 0)))
+			 goto efault;
+		 ret = get_errno(getdents(arg1, (char *)dirp, nbytes));
+		 if (!is_error(ret)) {
+			 struct dirent *de;
+			 int len = ret;
+			 int reclen;
+
+			 de = dirp;
+			 while (len > 0) {
+				 reclen = de->d_reclen;
+				 if (reclen > len)
+					 break;
+				 de->d_reclen = tswap16(reclen);
+				 len -= reclen;
+			 }
+		 }
+		 unlock_user(dirp, arg2, ret);
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR_getdirentries:
+	 {
+		 struct dirent *dirp;
+		 int32_t nbytes =  arg3;
+		 long basep;
+
+		 if (!(dirp = lock_user(VERIFY_WRITE, arg2, nbytes, 0)))
+			 goto efault;
+		 ret = get_errno(getdirentries(arg1, (char *)dirp, nbytes,
+			 &basep));
+		 if (!is_error(ret)) {
+			 struct dirent *de;
+			 int len = ret;
+			 int reclen;
+
+			 de = dirp;
+			 while (len > 0) {
+				 reclen = de->d_reclen;
+				 if (reclen > len)
+					 break;
+				 de->d_reclen = tswap16(reclen);
+				 len -= reclen;
+			 }
+		 }
+		 unlock_user(dirp, arg2, ret);
+		 if (arg4)
+			 if (put_user(nbytes, arg4, abi_ulong))
+				 ret = -TARGET_EFAULT;
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_chroot:
 	 if (!(p = lock_user_string(arg1)))
 		 goto efault;
@@ -2653,9 +2711,6 @@ do_stat:
     case TARGET_FREEBSD_NR_shmget:
     case TARGET_FREEBSD_NR_shmctl:
     case TARGET_FREEBSD_NR_shmdt:
-
-    case TARGET_FREEBSD_NR_getdents:
-    case TARGET_FREEBSD_NR_getdirentries:
 
     case TARGET_FREEBSD_NR_poll:
 
