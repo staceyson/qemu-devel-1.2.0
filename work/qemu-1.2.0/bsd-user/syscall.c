@@ -849,7 +849,7 @@ regpairs_aligned(void *cpu_env) {
 
 	return ((((CPUARMState *)cpu_env)->eabi) == 1);
 }
-#elif defined(TARGET_MIPS)
+#elif defined(TARGET_MIPS) && TARGET_ABI_BITS == 32
 static inline int
 regpairs_aligned(void *cpu_env) { return 1; }
 #else
@@ -2246,7 +2246,7 @@ do_stat:
 		 arg2 = arg3;
 		 arg3 = arg4;
 	 }
-	 ret = truncate(p, target_offset64(arg2, arg3));
+	 ret = get_errno(truncate(p, target_offset64(arg2, arg3)));
 	 unlock_user(p, arg1, 0);
 	 break;
 
@@ -2255,7 +2255,7 @@ do_stat:
 		 arg2 = arg3;
 		 arg3 = arg4;
 	 }
-	 ret = ftruncate(arg1, target_offset64(arg2, arg3));
+	 ret = get_errno(ftruncate(arg1, target_offset64(arg2, arg3)));
 	 break;
 
     case TARGET_FREEBSD_NR_acct:
