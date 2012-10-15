@@ -1312,6 +1312,7 @@ static abi_long
 do_setsockopt(int sockfd, int level, int optname, abi_ulong optval_addr,
     socklen_t optlen)
 {
+	int val;
 	abi_long ret;
 
 	switch(level) {
@@ -1404,8 +1405,13 @@ do_setsockopt(int sockfd, int level, int optname, abi_ulong optval_addr,
 		default:
 			goto unimplemented;
 		}
+		if (optlen < sizeof(uint32_t))
+			return (-TARGET_EINVAL);
+		if (get_user_u32(val, optval_addr))
+			return (-TARGET_EFAULT);
+		ret = get_errno(setsockopt(sockfd, SOL_SOCKET, optname, &val,
+			sizeof(val)));
 		break;
-
 	default:
 unimplemented:
 	gemu_log("Unsupported setsockopt level=%d optname=%d\n",
@@ -2716,7 +2722,7 @@ do_stat:
 
     case TARGET_FREEBSD_NR_sendfile:
 
-    case TARGET_FREEBSD_NR_fork:
+    /* case TARGET_FREEBSD_NR_fork: */
     case TARGET_FREEBSD_NR_rfork:
     case TARGET_FREEBSD_NR_vfork:
 
