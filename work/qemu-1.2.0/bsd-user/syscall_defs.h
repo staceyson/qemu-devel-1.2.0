@@ -150,6 +150,12 @@ struct target_rlimit {
 #define TARGET_RLIMIT_NPTS	11
 #define TARGET_RLIMIT_SWAP	12
 
+struct target_pollfd {
+	int fd;		/* file descriptor */
+	short events;	/* requested events */
+	short revents;	/* returned events */
+};
+
 /*
  * Constants used for fcntl(2).
  */

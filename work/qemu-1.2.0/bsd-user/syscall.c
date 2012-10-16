@@ -27,6 +27,7 @@
 #include <fcntl.h>
 #include <time.h>
 #include <limits.h>
+#include <poll.h>
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/mman.h>
@@ -1948,6 +1949,39 @@ do_stat:
 	ret = do_freebsd_select(arg1, arg2, arg3, arg4, arg5);
 	break;
 
+    case TARGET_FREEBSD_NR_poll:
+	{
+		nfds_t i, nfds = arg2;
+		int timeout = arg3;
+		struct pollfd *pfd;
+		struct target_pollfd *target_pfd = lock_user(VERIFY_WRITE, arg1,
+		    sizeof(struct target_pollfd) * nfds, 1);
+
+		if (!target_pfd)
+			goto efault;
+
+		pfd = alloca(sizeof(struct pollfd) * nfds);
+		for(i = 0; i < nfds; i++) {
+			pfd[i].fd = tswap32(target_pfd[i].fd);
+			pfd[i].events = tswap16(target_pfd[i].events);
+		}
+
+		ret = get_errno(poll(pfd, nfds, timeout));
+
+		if (!is_error(ret)) {
+			for(i = 0; i < nfds; i++) {
+				target_pfd[i].revents = tswap16(pfd[i].revents);
+			}
+		}
+		unlock_user(target_pfd, arg1, sizeof(struct target_pollfd) *
+		    nfds);
+	}
+	break;
+
+    case TARGET_FREEBSD_NR_pselect:
+	ret = unimplemented(num);
+	break;
+
     case TARGET_FREEBSD_NR_setrlimit:
 	{
 		int resource = target_to_host_resource(arg1);
@@ -2699,9 +2733,6 @@ do_stat:
     case TARGET_FREEBSD_NR_sigsuspend:
     case TARGET_FREEBSD_NR_sigreturn:
 
-
-    case TARGET_FREEBSD_NR_pselect:
-
     case TARGET_FREEBSD_NR_reboot:
     case TARGET_FREEBSD_NR_shutdown:
 
@@ -2717,8 +2748,6 @@ do_stat:
     case TARGET_FREEBSD_NR_shmget:
     case TARGET_FREEBSD_NR_shmctl:
     case TARGET_FREEBSD_NR_shmdt:
-
-    case TARGET_FREEBSD_NR_poll:
 
     case TARGET_FREEBSD_NR_sendfile:
 
