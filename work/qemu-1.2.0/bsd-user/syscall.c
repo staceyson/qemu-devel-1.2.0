@@ -3203,6 +3203,35 @@ do_stat:
 	 unlock_user(p, arg1, 0);
 	 break;
 
+    case TARGET_FREEBSD_NR_flock:
+	 ret = get_errno(flock(arg1, arg2));
+	 break;
+
+    case TARGET_FREEBSD_NR_mkfifo:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(mkfifo(p, arg2));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_pathconf:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(pathconf(p, arg2));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_fpathconf:
+	 ret = get_errno(fpathconf(arg1, arg2));
+	 break;
+
+    case TARGET_FREEBSD_NR_undelete:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(undelete(p));
+	 unlock_user(p, arg1, 0);
+	 break;
+
     case TARGET_FREEBSD_NR_getrusage:
 	 {
 		 struct rusage rusage;
@@ -3365,6 +3394,10 @@ do_stat:
 	 ret = get_errno(geteuid());
 	 break;
 
+    case TARGET_FREEBSD_NR_getgid:
+	 ret = get_errno(getgid());
+	 break;
+
     case TARGET_FREEBSD_NR_getegid:
 	 ret = get_errno(getegid());
 	 break;
@@ -3373,13 +3406,71 @@ do_stat:
 	 ret = get_errno(setuid(arg1));
 	 break;
 
+    case TARGET_FREEBSD_NR_setgid:
+	 ret = get_errno(setgid(arg1));
+	 break;
+
+    case TARGET_FREEBSD_NR_setegid:
+	 ret = get_errno(setegid(arg1));
+	 break;
+
+    case TARGET_FREEBSD_NR_seteuid:
+	 ret = get_errno(setegid(arg1));
+	 break;
+
+    case TARGET_FREEBSD_NR_getpgrp:
+	 ret = get_errno(getpgrp());
+	 break;
+
+#ifdef TARGET_FREEBSD_NR_setpgrp
+    case TARGET_FREEBSD_NR_setpgrp:
+	 ret = get_errno(setpgrp(arg1, arg2));
+	 break;
+#endif
+
+    case TARGET_FREEBSD_NR_setreuid:
+	 ret = get_errno(setreuid(arg1, arg2));
+	 break;
+
+    case TARGET_FREEBSD_NR_setregid:
+	 ret = get_errno(setregid(arg1, arg2));
+	 break;
+
+    case TARGET_FREEBSD_NR_setsid:
+	 ret = get_errno(setsid());
+	 break;
+
+    case TARGET_FREEBSD_NR_setfib:
+	 ret = get_errno(setfib(arg1));
+	 break;
+
+#ifdef TARGET_FREEBSD_NR_wait
+    case TARGET_FREEBSD_NR_wait:
+	 ret = get_errno(wait());
+	 break;
+#endif
 
     case TARGET_FREEBSD_NR_kill:
+#ifdef TARGET_FREEBSD_NR_killpg
+    case TARGET_FREEBSD_NR_killpg:
+#endif
     case TARGET_FREEBSD_NR_sigaction:
     case TARGET_FREEBSD_NR_sigprocmask:
     case TARGET_FREEBSD_NR_sigpending:
     case TARGET_FREEBSD_NR_sigsuspend:
     case TARGET_FREEBSD_NR_sigreturn:
+#ifdef TARGET_FREEBSD_NR_sigvec
+    case TARGET_FREEBSD_NR_sigvec:
+#endif
+#ifdef TARGET_FREEBSD_NR_sigblock
+    case TARGET_FREEBSD_NR_sigblock:
+#endif
+#ifdef TARGET_FREEBSD_NR_sigsetmask
+    case TARGET_FREEBSD_NR_sigsetmask:
+#endif
+#ifdef TARGET_FREEBSD_NR_sigstack
+    case TARGET_FREEBSD_NR_sigstack:
+#endif
 
     case TARGET_FREEBSD_NR_reboot:
     case TARGET_FREEBSD_NR_shutdown:
@@ -3387,16 +3478,73 @@ do_stat:
     case TARGET_FREEBSD_NR_swapon:
     case TARGET_FREEBSD_NR_swapoff:
 
-
     /* case TARGET_FREEBSD_NR_fork: */
     case TARGET_FREEBSD_NR_rfork:
     case TARGET_FREEBSD_NR_vfork:
     /* case TARGET_FREEBSD_NR_posix_fadvise: */
 
-    case TARGET_FREEBSD_NR_getfsstat:
+    case TARGET_FREEBSD_NR_ntp_adjtime:
+
+#ifdef TARGET_FREEBSD_NR_getdomainname
+    case TARGET_FREEBSD_NR_getdomainname:
+#endif
+#ifdef TARGET_FREEBSD_NR_setdomainname
+    case TARGET_FREEBSD_NR_setdomainname:
+#endif
+#ifdef TARGET_FREEBSD_NR_uname
+    case TARGET_FREEBSD_NR_uname:
+#endif
+
+    case TARGET_FREEBSD_NR_getfh:
+    case TARGET_FREEBSD_NR_lgetfh:
+
+    case TARGET_FREEBSD_NR_quotactl:
+#ifdef TARGET_FREEBSD_NR_quota
+    case TARGET_FREEBSD_NR_quota:
+#endif
+
+    case TARGET_FREEBSD_NR_adjtime:
+
+#ifdef TARGET_FREEBSD_NR_gethostid
+    case TARGET_FREEBSD_NR_gethostid:
+#endif
+#ifdef TARGET_FREEBSD_NR_gethostname
+    case TARGET_FREEBSD_NR_gethostname:
+#endif
+#ifdef TARGET_FREEBSD_NR_sethostname
+    case TARGET_FREEBSD_NR_sethostname:
+#endif
+
+    case TARGET_FREEBSD_NR_mincore:
+
+    case TARGET_FREEBSD_NR_vadvise:
+
+    case TARGET_FREEBSD_NR_sbrk:
+    case TARGET_FREEBSD_NR_sstk:
+
+#ifdef TARGET_FREEBSD_NR_getkerninfo
+    case TARGET_FREEBSD_NR_getkerninfo:
+#endif
+#ifdef TARGET_FREEBSD_NR_getpagesize
+    case TARGET_FREEBSD_NR_getpagesize:
+#endif
+
+    case TARGET_FREEBSD_NR_revoke:
+
+    case TARGET_FREEBSD_NR_setlogin:
+    case TARGET_FREEBSD_NR_getlogin:
+
+    case TARGET_FREEBSD_NR_profil:
+    case TARGET_FREEBSD_NR_ktrace:
+
 #ifdef TARGET_FREEBSD_NR_obreak
     case TARGET_FREEBSD_NR_obreak:
 #endif
+    case TARGET_FREEBSD_NR_freebsd6_pread:
+    case TARGET_FREEBSD_NR_freebsd6_pwrite:
+    case TARGET_FREEBSD_NR_freebsd6_lseek:
+    case TARGET_FREEBSD_NR_freebsd6_truncate:
+    case TARGET_FREEBSD_NR_freebsd6_ftruncate:
     case TARGET_FREEBSD_NR_sendfile:
     case TARGET_FREEBSD_NR_ptrace:
     case TARGET_FREEBSD_NR_ioctl:
