@@ -456,3 +456,63 @@ struct target_freebsd_stat {
 } __packed;
 
 int __getcwd(char *, size_t);
+
+struct target_sembuf {
+	unsigned short	sem_num;	/* semaphore # */
+	short		sem_op;		/* semaphore operation */
+	short		sem_flg;	/* operation flags */
+};
+
+union target_semun {
+	int		val;		/* value for SETVAL */
+	abi_ulong	buf; 		/* buffer for IPC_STAT & IPC_SET */
+	abi_ulong	array;		/* array for GETALL & SETALL */
+};
+
+struct target_ipc_perm {
+	uint32_t	cuid;		/* creator user id */
+	uint32_t	cgid;		/* creator group id */
+	uint32_t	uid;		/* user id */
+	uint32_t	gid;		/* group id */
+	uint16_t	mode;		/* r/w permission */
+	uint16_t	seq;		/* sequence # */
+	abi_long	key;		/* user specified msg/sem/shm key */
+};
+
+struct target_msqid_ds {
+	struct  target_ipc_perm msg_perm; /* msg queue permission bits */
+	abi_ulong	msg_first;	/* first message in the queue */
+	abi_ulong	msg_last;	/* last message in the queue */
+	abi_ulong	msg_cbytes;	/* # of bytes in use on the queue */
+	abi_ulong	msg_qnum;	/* number of msgs in the queue */
+	abi_ulong	msg_qbytes;	/* max # of bytes on the queue */
+	int32_t		msg_lspid;	/* pid of last msgsnd() */
+	int32_t		msg_lrpid;	/* pid of last msgrcv() */
+	abi_ulong	msg_stime;	/* time of last msgsnd() */
+	abi_ulong	msg_rtime;	/* time of last msgrcv() */
+	abi_ulong	msg_ctime;	/* time of last msgctl() */
+};
+
+struct target_msgbuf {
+	abi_long	mtype;		/* message type */
+	char		mtext[1];	/* body of message */
+};
+
+struct target_semid_ds {
+	struct target_ipc_perm sem_perm; /* operation permission struct */
+	abi_ulong	sem_base;	/* pointer to first semaphore in set */
+	uint16_t	sem_nsems;	/* number of sems in set */
+	abi_ulong	sem_otime;	/* last operation time */
+	abi_ulong	sem_ctime;	/* times measured in secs */
+};
+
+struct target_shmid_ds {
+	struct  target_ipc_perm shm_perm; /* peration permission structure */
+	abi_ulong	shm_segsz;	/* size of segment in bytes */
+	int32_t		shm_lpid;	/* process ID of last shared memory op */
+	int32_t		shm_cpid;	/* process ID of creator */
+	int32_t		shm_nattch;	/* number of current attaches */
+	abi_ulong	shm_atime;	/* time of last shmat() */
+	abi_ulong	shm_dtime;	/* time of last shmdt() */
+	abi_ulong	shm_ctime;	/* time of last change by shmctl() */
+};
