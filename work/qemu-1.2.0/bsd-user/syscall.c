@@ -2995,6 +2995,50 @@ do_stat:
 	 unlock_user(p, arg2, 0);
 	 break;
 
+    case TARGET_FREEBSD_NR_getgroups:
+	 {
+		 int gidsetsize = arg1;
+		 uint32_t *target_grouplist;
+		 gid_t *grouplist;
+		 int i;
+
+		 grouplist = alloca(gidsetsize * sizeof(gid_t));
+		 ret = get_errno(getgroups(gidsetsize, grouplist));
+		 if (gidsetsize == 0)
+			 break;
+		 if (!is_error(ret)) {
+			 target_grouplist = lock_user(VERIFY_WRITE, arg2,
+			     gidsetsize * 2, 0);
+			 if (!target_grouplist)
+				 goto efault;
+			 for (i = 0;i < ret; i++)
+				 target_grouplist[i] = tswap32(grouplist[i]);
+			 unlock_user(target_grouplist, arg2, gidsetsize * 2);
+		 }
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR_setgroups:
+	 {
+		 int gidsetsize = arg1;
+		 uint32_t *target_grouplist;
+		 gid_t *grouplist;
+		 int i;
+
+		 grouplist = alloca(gidsetsize * sizeof(gid_t));
+		 target_grouplist = lock_user(VERIFY_READ, arg2,
+		     gidsetsize * 2, 1);
+		 if (!target_grouplist) {
+			 ret = -TARGET_EFAULT;
+			 goto fail;
+		 }
+		 for(i = 0;i < gidsetsize; i++)
+			 grouplist[i] = tswap32(target_grouplist[i]);
+		 unlock_user(target_grouplist, arg2, 0);
+		 ret = get_errno(setgroups(gidsetsize, grouplist));
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_umask:
 	 ret = get_errno(umask(arg1));
 	 break;
@@ -3291,15 +3335,12 @@ do_stat:
     case TARGET_FREEBSD_NR_swapon:
     case TARGET_FREEBSD_NR_swapoff:
 
-    case TARGET_FREEBSD_NR_sendfile:
 
     /* case TARGET_FREEBSD_NR_fork: */
     case TARGET_FREEBSD_NR_rfork:
     case TARGET_FREEBSD_NR_vfork:
 
-    case TARGET_FREEBSD_NR_getgroups:
-    case TARGET_FREEBSD_NR_setgroups:
-
+    case TARGET_FREEBSD_NR_sendfile:
     case TARGET_FREEBSD_NR_ptrace:
     case TARGET_FREEBSD_NR_ioctl:
 
