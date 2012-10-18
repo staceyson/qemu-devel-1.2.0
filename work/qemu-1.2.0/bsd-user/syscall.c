@@ -2054,6 +2054,15 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
         unlock_user(p, arg1, 0);
         break;
 
+#ifdef TARGET_FREEBSD_NR_creat
+    case TARGET_FREEBSD_NR_creat:
+	if (!(p = lock_user_string(arg1)))
+		goto efault;
+	ret = get_errno(creat(p, arg2));
+	unlock_user(p, arg1, 0);
+	break;
+#endif
+
     case TARGET_FREEBSD_NR_mmap:
         ret = get_errno(target_mmap(arg1, arg2, arg3,
                                     target_to_host_bitmask(arg4, mmap_flags_tbl),
@@ -2995,6 +3004,24 @@ do_stat:
 	 unlock_user(p, arg2, 0);
 	 break;
 
+    case TARGET_FREEBSD_NR_chflags:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(chflags(p, arg2));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_lchflags:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(lchflags(p, arg2));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_fchflags:
+	 ret = get_errno(fchflags(arg1, arg2));
+	 break;
+
     case TARGET_FREEBSD_NR_getgroups:
 	 {
 		 int gidsetsize = arg1;
@@ -3322,6 +3349,31 @@ do_stat:
 	 ret = do_shmdt(arg1);
 	 break;
 
+    case TARGET_FREEBSD_NR_getpid:
+	 ret = get_errno(getpid());
+	 break;
+
+    case TARGET_FREEBSD_NR_getppid:
+	 ret = get_errno(getppid());
+	 break;
+
+    case TARGET_FREEBSD_NR_getuid:
+	 ret = get_errno(getuid());
+	 break;
+
+    case TARGET_FREEBSD_NR_geteuid:
+	 ret = get_errno(geteuid());
+	 break;
+
+    case TARGET_FREEBSD_NR_getegid:
+	 ret = get_errno(getegid());
+	 break;
+
+    case TARGET_FREEBSD_NR_setuid:
+	 ret = get_errno(setuid(arg1));
+	 break;
+
+
     case TARGET_FREEBSD_NR_kill:
     case TARGET_FREEBSD_NR_sigaction:
     case TARGET_FREEBSD_NR_sigprocmask:
@@ -3339,13 +3391,15 @@ do_stat:
     /* case TARGET_FREEBSD_NR_fork: */
     case TARGET_FREEBSD_NR_rfork:
     case TARGET_FREEBSD_NR_vfork:
+    /* case TARGET_FREEBSD_NR_posix_fadvise: */
 
+    case TARGET_FREEBSD_NR_getfsstat:
+#ifdef TARGET_FREEBSD_NR_obreak
+    case TARGET_FREEBSD_NR_obreak:
+#endif
     case TARGET_FREEBSD_NR_sendfile:
     case TARGET_FREEBSD_NR_ptrace:
     case TARGET_FREEBSD_NR_ioctl:
-
-    /* case TARGET_FREEBSD_NR_posix_fadvise: */
-
 	ret = unimplemented(num);
 	break;
 
