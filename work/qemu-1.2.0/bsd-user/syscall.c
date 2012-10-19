@@ -39,6 +39,9 @@
 #include <sys/mount.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
+#ifdef __FreeBSD__
+#include <sys/regression.h>
+#endif
 #include <sys/un.h>
 #include <sys/ipc.h>
 #include <sys/sem.h>
@@ -2054,6 +2057,24 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
         unlock_user(p, arg1, 0);
         break;
 
+    case TARGET_FREEBSD_NR_openat:
+        if (!(p = lock_user_string(arg2)))
+            goto efault;
+        ret = get_errno(openat(arg1, path(p),
+                             target_to_host_bitmask(arg3, fcntl_flags_tbl),
+                             arg4));
+        unlock_user(p, arg2, 0);
+        break;
+
+    case TARGET_FREEBSD_NR_close:
+	ret = get_errno(close(arg1));
+	break;
+
+    case TARGET_FREEBSD_NR_closefrom:
+	ret = 0;
+	closefrom(arg1);
+	break;
+
 #ifdef TARGET_FREEBSD_NR_creat
     case TARGET_FREEBSD_NR_creat:
 	if (!(p = lock_user_string(arg1)))
@@ -2137,6 +2158,12 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
         ret = get_errno(lstat(path(p), &st));
         unlock_user(p, arg1, 0);
         goto do_stat;
+
+    case TARGET_FREEBSD_NR_nstat:
+    case TARGET_FREEBSD_NR_nfstat:
+    case TARGET_FREEBSD_NR_nlstat:
+	ret = unimplemented(num);
+	break;
 
     case TARGET_FREEBSD_NR_fstat:
         {
@@ -2261,6 +2288,19 @@ do_stat:
 		ret = get_errno(settimeofday(&tv, arg2 != 0 ? & tz : NULL));
 	}
         break;
+
+    case TARGET_FREEBSD_NR_ktimer_create:
+    case TARGET_FREEBSD_NR_ktimer_delete:
+    case TARGET_FREEBSD_NR_ktimer_settime:
+    case TARGET_FREEBSD_NR_ktimer_gettime:
+    case TARGET_FREEBSD_NR_ktimer_getoverrun:
+    case TARGET_FREEBSD_NR_minherit:
+	ret = unimplemented(num);
+	break;
+
+    case TARGET_FREEBSD_NR_kqueue:
+	ret = get_errno(kqueue());
+	break; 
 
 #ifdef __FreeBSD__
     case TARGET_FREEBSD_NR_kevent:
@@ -2499,6 +2539,7 @@ do_stat:
 	}
 	break;
 
+    case TARGET_FREEBSD_NR_openbsd_poll:
     case TARGET_FREEBSD_NR_pselect:
 	ret = unimplemented(num);
 	break;
@@ -3214,10 +3255,24 @@ do_stat:
 	 unlock_user(p, arg1, 0);
 	 break;
 
+    case TARGET_FREEBSD_NR_mkfifoat:
+	 if (!(p = lock_user_string(arg2)))
+		 goto efault;
+	 ret = get_errno(mkfifoat(arg1, p, arg2));
+	 unlock_user(p, arg2, 0);
+	 break;
+
     case TARGET_FREEBSD_NR_pathconf:
 	 if (!(p = lock_user_string(arg1)))
 		 goto efault;
 	 ret = get_errno(pathconf(p, arg2));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_lpathconf:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(lpathconf(p, arg2));
 	 unlock_user(p, arg1, 0);
 	 break;
 
@@ -3230,6 +3285,35 @@ do_stat:
 		 goto efault;
 	 ret = get_errno(undelete(p));
 	 unlock_user(p, arg1, 0);
+	 break;
+
+
+    case TARGET_FREEBSD_NR___acl_get_file:
+    case TARGET_FREEBSD_NR___acl_set_file:
+    case TARGET_FREEBSD_NR___acl_get_fd:
+    case TARGET_FREEBSD_NR___acl_set_fd:
+    case TARGET_FREEBSD_NR___acl_delete_file:
+    case TARGET_FREEBSD_NR___acl_delete_fd:
+    case TARGET_FREEBSD_NR___acl_aclcheck_file:
+    case TARGET_FREEBSD_NR___acl_aclcheck_fd:
+    case TARGET_FREEBSD_NR___acl_get_link:
+    case TARGET_FREEBSD_NR___acl_set_link:
+    case TARGET_FREEBSD_NR___acl_delete_link:
+    case TARGET_FREEBSD_NR___acl_aclcheck_link:
+    case TARGET_FREEBSD_NR_extattrctl:
+    case TARGET_FREEBSD_NR_extattr_set_file:
+    case TARGET_FREEBSD_NR_extattr_get_file:
+    case TARGET_FREEBSD_NR_extattr_delete_file:
+    case TARGET_FREEBSD_NR_extattr_set_fd:
+    case TARGET_FREEBSD_NR_extattr_get_fd:
+    case TARGET_FREEBSD_NR_extattr_delete_fd:
+    case TARGET_FREEBSD_NR_extattr_get_link:
+    case TARGET_FREEBSD_NR_extattr_set_link:
+    case TARGET_FREEBSD_NR_extattr_delete_link:
+    case TARGET_FREEBSD_NR_extattr_list_fd:
+    case TARGET_FREEBSD_NR_extattr_list_file:
+    case TARGET_FREEBSD_NR_extattr_list_link:
+	 ret = unimplemented(num);
 	 break;
 
     case TARGET_FREEBSD_NR_getrusage:
@@ -3378,6 +3462,11 @@ do_stat:
 	 ret = do_shmdt(arg1);
 	 break;
 
+    case TARGET_FREEBSD_NR_shm_open:
+    case TARGET_FREEBSD_NR_shm_unlink:
+	 ret = unimplemented(num);
+	 break;
+
     case TARGET_FREEBSD_NR_getpid:
 	 ret = get_errno(getpid());
 	 break;
@@ -3436,12 +3525,37 @@ do_stat:
 	 ret = get_errno(setregid(arg1, arg2));
 	 break;
 
+    case TARGET_FREEBSD_NR_setresuid:
+	 ret = get_errno(setresuid(arg1, arg2, arg3));
+	 break;
+
+    case TARGET_FREEBSD_NR_setresgid:
+	 ret = get_errno(setresgid(arg1, arg2, arg3));
+	 break;
+
+    case TARGET_FREEBSD_NR_getresuid:
+    case TARGET_FREEBSD_NR_getresgid:
+	 ret = unimplemented(num);
+	 break;
+
     case TARGET_FREEBSD_NR_setsid:
 	 ret = get_errno(setsid());
 	 break;
 
+    case TARGET_FREEBSD_NR_getsid:
+	 ret = get_errno(getsid(arg1));
+	 break;
+
     case TARGET_FREEBSD_NR_setfib:
 	 ret = get_errno(setfib(arg1));
+	 break;
+
+    case TARGET_FREEBSD_NR___setugid:
+	 ret = get_errno(__setugid(arg1));
+	 break;
+
+    case TARGET_FREEBSD_NR_issetugid:
+	 ret = get_errno(issetugid());
 	 break;
 
 #ifdef TARGET_FREEBSD_NR_wait
@@ -3471,6 +3585,50 @@ do_stat:
 #ifdef TARGET_FREEBSD_NR_sigstack
     case TARGET_FREEBSD_NR_sigstack:
 #endif
+    case TARGET_FREEBSD_NR_sigwait:
+    case TARGET_FREEBSD_NR_sigtimedwait:
+    case TARGET_FREEBSD_NR_sigwaitinfo:
+    case TARGET_FREEBSD_NR_sigqueue:
+
+    case TARGET_FREEBSD_NR_getcontext:
+    case TARGET_FREEBSD_NR_setcontext:
+    case TARGET_FREEBSD_NR_swapcontext:
+
+#ifdef TARGET_FREEBSD_NR_aio_read
+    case TARGET_FREEBSD_NR_aio_read:
+#endif
+#ifdef TARGET_FREEBSD_NR_aio_write
+    case TARGET_FREEBSD_NR_aio_write:
+#endif
+#ifdef TARGET_FREEBSD_NR_aio_return
+    case TARGET_FREEBSD_NR_aio_return:
+#endif
+#ifdef TARGET_FREEBSD_NR_aio_suspend
+    case TARGET_FREEBSD_NR_aio_suspend:
+#endif
+#ifdef TARGET_FREEBSD_NR_aio_cancel
+    case TARGET_FREEBSD_NR_aio_cancel:
+#endif
+#ifdef TARGET_FREEBSD_NR_aio_error
+    case TARGET_FREEBSD_NR_aio_error:
+#endif
+#ifdef TARGET_FREEBSD_NR_aio_waitcomplete
+    case TARGET_FREEBSD_NR_aio_waitcomplete:
+#endif
+#ifdef TARGET_FREEBSD_NR_lio_listio
+    case TARGET_FREEBSD_NR_lio_listio:
+#endif
+
+    case TARGET_FREEBSD_NR_yield:
+    case TARGET_FREEBSD_NR_sched_setparam:
+    case TARGET_FREEBSD_NR_sched_getparam:
+    case TARGET_FREEBSD_NR_sched_setscheduler:
+    case TARGET_FREEBSD_NR_sched_getscheduler:
+    case TARGET_FREEBSD_NR_sched_yield:
+    case TARGET_FREEBSD_NR_sched_get_priority_max:
+    case TARGET_FREEBSD_NR_sched_get_priority_min:
+    case TARGET_FREEBSD_NR_sched_rr_get_interval:
+
 
     case TARGET_FREEBSD_NR_reboot:
     case TARGET_FREEBSD_NR_shutdown:
@@ -3481,7 +3639,38 @@ do_stat:
     /* case TARGET_FREEBSD_NR_fork: */
     case TARGET_FREEBSD_NR_rfork:
     case TARGET_FREEBSD_NR_vfork:
-    /* case TARGET_FREEBSD_NR_posix_fadvise: */
+    case TARGET_FREEBSD_NR_pdfork:
+
+    case TARGET_FREEBSD_NR_pdkill:
+    case TARGET_FREEBSD_NR_pdgetpid:
+
+    case TARGET_FREEBSD_NR_thr_create:
+    case TARGET_FREEBSD_NR_thr_exit:
+    case TARGET_FREEBSD_NR_thr_self:
+    case TARGET_FREEBSD_NR_thr_suspend:
+    case TARGET_FREEBSD_NR_thr_wake:
+    case TARGET_FREEBSD_NR_thr_new:
+    case TARGET_FREEBSD_NR_thr_set_name:
+    case TARGET_FREEBSD_NR_thr_kill2:
+
+    case TARGET_FREEBSD_NR_rtprio_thread:
+    case TARGET_FREEBSD_NR_cpuset:
+    case TARGET_FREEBSD_NR_cpuset_getid:
+    case TARGET_FREEBSD_NR_cpuset_setid:
+    case TARGET_FREEBSD_NR_cpuset_getaffinity:
+    case TARGET_FREEBSD_NR_cpuset_setaffinity:
+
+    case TARGET_FREEBSD_NR__umtx_lock:
+    case TARGET_FREEBSD_NR__umtx_unlock:
+
+    case TARGET_FREEBSD_NR_posix_fadvise:
+    case TARGET_FREEBSD_NR_posix_fallocate:
+
+    case TARGET_FREEBSD_NR_rctl_get_racct:
+    case TARGET_FREEBSD_NR_rctl_get_rules:
+    case TARGET_FREEBSD_NR_rctl_add_rule:
+    case TARGET_FREEBSD_NR_rctl_remove_rule:
+    case TARGET_FREEBSD_NR_rctl_get_limits:
 
     case TARGET_FREEBSD_NR_ntp_adjtime:
 
@@ -3495,8 +3684,29 @@ do_stat:
     case TARGET_FREEBSD_NR_uname:
 #endif
 
+    case TARGET_FREEBSD_NR_sctp_peeloff:
+    case TARGET_FREEBSD_NR_sctp_generic_sendmsg:
+    case TARGET_FREEBSD_NR_sctp_generic_recvmsg:
+
     case TARGET_FREEBSD_NR_getfh:
     case TARGET_FREEBSD_NR_lgetfh:
+    case TARGET_FREEBSD_NR_fhstatfs:
+    case TARGET_FREEBSD_NR_fhopen:
+    case TARGET_FREEBSD_NR_fhstat:
+
+    case TARGET_FREEBSD_NR_getfsstat:
+    case TARGET_FREEBSD_NR_fstatfs:
+
+    case TARGET_FREEBSD_NR_modfnext:
+    case TARGET_FREEBSD_NR_modfind:
+    case TARGET_FREEBSD_NR_kldload:
+    case TARGET_FREEBSD_NR_kldunload:
+    case TARGET_FREEBSD_NR_kldunloadf:
+    case TARGET_FREEBSD_NR_kldfind:
+    case TARGET_FREEBSD_NR_kldnext:
+    case TARGET_FREEBSD_NR_kldstat:
+    case TARGET_FREEBSD_NR_kldfirstmod:
+    case TARGET_FREEBSD_NR_kldsym:
 
     case TARGET_FREEBSD_NR_quotactl:
 #ifdef TARGET_FREEBSD_NR_quota
@@ -3533,9 +3743,42 @@ do_stat:
 
     case TARGET_FREEBSD_NR_setlogin:
     case TARGET_FREEBSD_NR_getlogin:
+    case TARGET_FREEBSD_NR_setloginclass:
+    case TARGET_FREEBSD_NR_getloginclass:
 
     case TARGET_FREEBSD_NR_profil:
     case TARGET_FREEBSD_NR_ktrace:
+
+    case TARGET_FREEBSD_NR_jail:
+    case TARGET_FREEBSD_NR_jail_attach:
+    case TARGET_FREEBSD_NR_jail_get:
+    case TARGET_FREEBSD_NR_jail_set:
+    case TARGET_FREEBSD_NR_jail_remove:
+
+    case TARGET_FREEBSD_NR_cap_enter:
+    case TARGET_FREEBSD_NR_cap_getmode:
+
+    case TARGET_FREEBSD_NR_kenv:
+    case TARGET_FREEBSD_NR_uuidgen:
+
+    case TARGET_FREEBSD_NR___mac_get_proc:
+    case TARGET_FREEBSD_NR___mac_set_proc:
+    case TARGET_FREEBSD_NR___mac_get_fd:
+    case TARGET_FREEBSD_NR___mac_set_fd:
+    case TARGET_FREEBSD_NR___mac_get_file:
+    case TARGET_FREEBSD_NR___mac_set_file:
+    case TARGET_FREEBSD_NR___mac_get_link:
+    case TARGET_FREEBSD_NR___mac_set_link:
+    case TARGET_FREEBSD_NR_mac_syscall:
+
+    case TARGET_FREEBSD_NR_audit:
+    case TARGET_FREEBSD_NR_auditon:
+    case TARGET_FREEBSD_NR_getaudit:
+    case TARGET_FREEBSD_NR_setaudit:
+    case TARGET_FREEBSD_NR_getaudit_addr:
+    case TARGET_FREEBSD_NR_setaudit_addr:
+    case TARGET_FREEBSD_NR_auditctl:
+
 
 #ifdef TARGET_FREEBSD_NR_obreak
     case TARGET_FREEBSD_NR_obreak:
@@ -3547,6 +3790,7 @@ do_stat:
     case TARGET_FREEBSD_NR_freebsd6_ftruncate:
     case TARGET_FREEBSD_NR_sendfile:
     case TARGET_FREEBSD_NR_ptrace:
+    case TARGET_FREEBSD_NR_utrace:
     case TARGET_FREEBSD_NR_ioctl:
 	ret = unimplemented(num);
 	break;
