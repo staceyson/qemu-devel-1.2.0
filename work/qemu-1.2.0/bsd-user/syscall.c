@@ -2,6 +2,7 @@
  *  BSD syscalls
  *
  *  Copyright (c) 2003 - 2008 Fabrice Bellard
+ *  Copyright (c) 2012 Stacey Son <sson@FreeBSD.org>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -41,6 +42,7 @@
 #include <sys/socket.h>
 #ifdef __FreeBSD__
 #include <sys/regression.h>
+#include <sys/procdesc.h>
 #endif
 #include <sys/un.h>
 #include <sys/ipc.h>
@@ -1937,6 +1939,68 @@ end:
 	return (ret);
 }
 
+static void
+set_second_rval(CPUArchState *env, abi_ulong retval2)
+{
+#if defined(TARGET_ALPHA)
+	((CPUAlphaState *)env)->ir[IR_A4] = retval2;
+#elif defined(TARGET_ARM)
+	((CPUARMState *)env)->regs[1] = retval2;
+#elif defined(TARGET_MIPS)
+	((CPUMIPSState*)env)->active_tc.gpr[3] = retval2;
+#elif defined(TARGET_SH4)
+	((CPUSH4State*)env)->gregs[1] = retval2;
+#elif defined(TARGET_X86_64) || defined(TARGET_I386)
+	((CPUX86State*)env)->regs[R_EDX] = retval2;
+#elif defined(TARGET_SPARC64) || defined(TARGET_SPARC)
+	((CPUSPARCState*)env)->regwptr[1] = retval2;
+#else
+#warning Arch not supported for returning multiple values from syscall.
+#endif
+}
+
+/*
+ * do_fock() must return host values and target errnos (unlike most do_*()
+ * functions.
+ */
+static int
+do_fork(CPUArchState *env, int num, int flags, int *fdp)
+{
+	int ret, fd;
+	abi_ulong child_flag = 0;
+
+	fork_start();
+	switch(num) {
+	case TARGET_FREEBSD_NR_fork:
+	case TARGET_FREEBSD_NR_vfork:
+		ret = fork();
+	case TARGET_FREEBSD_NR_rfork:
+		ret = rfork(flags);
+	case TARGET_FREEBSD_NR_pdfork:
+		ret = pdfork(&fd, flags);
+	default:
+		ret = -TARGET_ENOSYS;
+		break;
+	}
+	if (0 == ret) {
+		/* Child */
+		child_flag = 1;
+		cpu_clone_regs(env, 0);
+	} else {
+		/* Parent */
+		fork_end(0);
+	}
+	if (fdp != NULL)
+		*fdp = fd;
+
+	/*
+	 * The fork() syscall sets a child flag in 2nd return value:
+	 *   0 for parent process, 1 for child process
+	 */
+	set_second_rval(env, child_flag);
+
+	return (ret);
+}
 
 /* do_syscall() should always have a single exit point at the end so
    that actions, such as logging of syscall results, can be performed.
@@ -2300,7 +2364,7 @@ do_stat:
 
     case TARGET_FREEBSD_NR_kqueue:
 	ret = get_errno(kqueue());
-	break; 
+	break;
 
 #ifdef __FreeBSD__
     case TARGET_FREEBSD_NR_kevent:
@@ -2466,21 +2530,7 @@ do_stat:
 		int host_ret = pipe(host_pipe);
 
 		if (!is_error(host_ret)) {
-#if defined(TARGET_ALPHA)
-			((CPUAlphaState *)cpu_env)->ir[IR_A4] =
-			    host_pipe[1];
-#elif defined(TARGET_ARM)
-			((CPUARMState *)cpu_env)->regs[1] =
-			    host_pipe[1];
-#elif defined(TARGET_MIPS)
-			((CPUMIPSState*)cpu_env)->active_tc.gpr[3] =
-			    host_pipe[1];
-#elif defined(TARGET_SH4)
-			((CPUSH4State*)cpu_env)->gregs[1] =
-			    host_pipe[1];
-#else
-#warning Architecture not supported for pipe(2).
-#endif
+			set_second_rval(cpu_env, host_pipe[1]);
 			ret = host_pipe[0];
 		} else
 			ret = get_errno(host_ret);
@@ -3564,6 +3614,28 @@ do_stat:
 	 break;
 #endif
 
+    case TARGET_FREEBSD_NR_fork:
+	 ret = get_errno(do_fork(cpu_env, num, 0, NULL));
+	 break;
+
+    case TARGET_FREEBSD_NR_rfork:
+	 ret = get_errno(do_fork(cpu_env, num, arg1, NULL));
+	 break;
+
+    case TARGET_FREEBSD_NR_vfork:
+	 ret = get_errno(do_fork(cpu_env, num, 0, NULL));
+	 break;
+
+    case TARGET_FREEBSD_NR_pdfork:
+	 {
+		int pd;
+
+		ret = get_errno(do_fork(cpu_env, num, arg2, &pd));
+		if (put_user_s32(pd, arg1))
+			goto efault;
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_kill:
 #ifdef TARGET_FREEBSD_NR_killpg
     case TARGET_FREEBSD_NR_killpg:
@@ -3635,11 +3707,6 @@ do_stat:
 
     case TARGET_FREEBSD_NR_swapon:
     case TARGET_FREEBSD_NR_swapoff:
-
-    /* case TARGET_FREEBSD_NR_fork: */
-    case TARGET_FREEBSD_NR_rfork:
-    case TARGET_FREEBSD_NR_vfork:
-    case TARGET_FREEBSD_NR_pdfork:
 
     case TARGET_FREEBSD_NR_pdkill:
     case TARGET_FREEBSD_NR_pdgetpid:
