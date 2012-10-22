@@ -3543,8 +3543,18 @@ do_stat:
 	 break;
 
     case TARGET_FREEBSD_NR_shm_open:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(shm_open(path(p),
+		 target_to_host_bitmask(arg2, fcntl_flags_tbl),
+		 arg3));
+	 unlock_user(p, arg1, 0);
+	 break;
+
     case TARGET_FREEBSD_NR_shm_unlink:
-	 ret = unimplemented(num);
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(shm_unlink(p));
 	 break;
 
     case TARGET_FREEBSD_NR_getpid:
