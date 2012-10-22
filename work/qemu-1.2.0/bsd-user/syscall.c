@@ -204,6 +204,8 @@ static abi_long do_freebsd_sysarch(void *env, int op, abi_ulong parms)
 #endif
 
 #ifdef __FreeBSD__
+extern int _getlogin(char *, int);
+
 /*
  * XXX this uses the undocumented oidfmt interface to find the kind of
  * a requested sysctl, see /sys/kern/kern_sysctl.c:sysctl_sysctl_oidfmt()
@@ -3366,6 +3368,34 @@ do_stat:
 	 ret = unimplemented(num);
 	 break;
 
+    case TARGET_FREEBSD_NR_setlogin:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(setlogin(p));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_getlogin:
+	 if (!(p = lock_user_string(arg1)))
+		 goto efault;
+	 ret = get_errno(_getlogin(p, arg2));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_setloginclass:
+	 if (!(p = lock_user_string(arg1)))
+		goto efault;
+	 ret = get_errno(setloginclass(p));
+	 unlock_user(p, arg1, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_getloginclass:
+	 if (!(p = lock_user_string(arg1)))
+		goto efault;
+	 ret = get_errno(getloginclass(p, arg2));
+	 unlock_user(p, arg1, 0);
+	 break;
+
     case TARGET_FREEBSD_NR_getrusage:
 	 {
 		 struct rusage rusage;
@@ -3807,11 +3837,6 @@ do_stat:
 #endif
 
     case TARGET_FREEBSD_NR_revoke:
-
-    case TARGET_FREEBSD_NR_setlogin:
-    case TARGET_FREEBSD_NR_getlogin:
-    case TARGET_FREEBSD_NR_setloginclass:
-    case TARGET_FREEBSD_NR_getloginclass:
 
     case TARGET_FREEBSD_NR_profil:
     case TARGET_FREEBSD_NR_ktrace:
