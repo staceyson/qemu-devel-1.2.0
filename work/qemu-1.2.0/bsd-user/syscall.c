@@ -716,7 +716,7 @@ host_to_target_waitstatus(int status)
 }
 
 static inline abi_long
-fbsd_copy_from_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
+copy_from_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
 {
      struct target_freebsd_timeval *target_tv;
 
@@ -767,7 +767,7 @@ host_to_target_timespec(abi_ulong target_ts_addr, struct timespec *ts)
      return (0);
 }
 static inline abi_ulong
-fbsd_copy_from_user_fdset(fd_set *fds, abi_ulong target_fds_addr, int n)
+copy_from_user_fdset(fd_set *fds, abi_ulong target_fds_addr, int n)
 {
 	int i, nw, j, k;
 	abi_ulong b, *target_fds;
@@ -796,11 +796,11 @@ fbsd_copy_from_user_fdset(fd_set *fds, abi_ulong target_fds_addr, int n)
 }
 
 static inline abi_ulong
-fbsd_copy_from_user_fdset_ptr(fd_set *fds, fd_set **fds_ptr,
+copy_from_user_fdset_ptr(fd_set *fds, fd_set **fds_ptr,
     abi_ulong target_fds_addr, int n)
 {
 	if (target_fds_addr) {
-		if (fbsd_copy_from_user_fdset(fds, target_fds_addr, n))
+		if (copy_from_user_fdset(fds, target_fds_addr, n))
 			return (-TARGET_EFAULT);
 		*fds_ptr = fds;
 	} else {
@@ -810,7 +810,7 @@ fbsd_copy_from_user_fdset_ptr(fd_set *fds, fd_set **fds_ptr,
 }
 
 static inline abi_long
-fbsd_copy_to_user_fdset(abi_ulong target_fds_addr, const fd_set *fds, int n)
+copy_to_user_fdset(abi_ulong target_fds_addr, const fd_set *fds, int n)
 {
 	int i, nw, j, k;
 	abi_long v;
@@ -1168,18 +1168,15 @@ do_freebsd_select(int n, abi_ulong rfd_addr, abi_ulong wfd_addr,
 	struct timeval tv, *tv_ptr;
 	abi_long ret;
 
-	if ((ret = fbsd_copy_from_user_fdset_ptr(&rfds, &rfds_ptr, rfd_addr, n))
-	    != 0)
+	if ((ret = copy_from_user_fdset_ptr(&rfds, &rfds_ptr, rfd_addr, n)) != 0)
 		return (ret);
-	if ((ret = fbsd_copy_from_user_fdset_ptr(&wfds, &wfds_ptr, wfd_addr, n))
-	    != 0)
+	if ((ret = copy_from_user_fdset_ptr(&wfds, &wfds_ptr, wfd_addr, n)) != 0)
 		return (ret);
-	if ((ret = fbsd_copy_from_user_fdset_ptr(&efds, &efds_ptr, efd_addr, n))
-	    != 0)
+	if ((ret = copy_from_user_fdset_ptr(&efds, &efds_ptr, efd_addr, n)) != 0)
 		return (ret);
 
 	if (target_tv_addr) {
-		if (fbsd_copy_from_user_timeval(&tv, target_tv_addr))
+		if (copy_from_user_timeval(&tv, target_tv_addr))
 			return (-TARGET_EFAULT);
 		tv_ptr = &tv;
 	} else {
@@ -1189,15 +1186,75 @@ do_freebsd_select(int n, abi_ulong rfd_addr, abi_ulong wfd_addr,
 	ret = get_errno(select(n, rfds_ptr, wfds_ptr, efds_ptr, tv_ptr));
 
 	if (!is_error(ret)) {
-		if (rfd_addr && fbsd_copy_to_user_fdset(rfd_addr, &rfds, n))
+		if (rfd_addr && copy_to_user_fdset(rfd_addr, &rfds, n))
 			return (-TARGET_EFAULT);
-		if (wfd_addr && fbsd_copy_to_user_fdset(wfd_addr, &wfds, n))
+		if (wfd_addr && copy_to_user_fdset(wfd_addr, &wfds, n))
 			return (-TARGET_EFAULT);
-		if (efd_addr && fbsd_copy_to_user_fdset(efd_addr, &efds, n))
+		if (efd_addr && copy_to_user_fdset(efd_addr, &efds, n))
 			return (-TARGET_EFAULT);
 
 		if (target_tv_addr &&
 		    fbsd_copy_to_user_timeval(&tv, target_tv_addr))
+			return (-TARGET_EFAULT);
+	}
+
+	return (ret);
+}
+
+/* do_freebsd_pselect() must return target values and target errnos. */
+static abi_long
+do_freebsd_pselect(int n, abi_ulong rfd_addr, abi_ulong wfd_addr,
+    abi_ulong efd_addr, abi_ulong ts_addr, abi_ulong set_addr)
+{
+	fd_set rfds, wfds, efds;
+	fd_set *rfds_ptr, *wfds_ptr, *efds_ptr;
+	sigset_t set, *set_ptr;
+	struct timespec ts, *ts_ptr;
+	void *p;
+	abi_long ret;
+
+	ret = copy_from_user_fdset_ptr(&rfds, &rfds_ptr, rfd_addr, n);
+	if (ret)
+		return (ret);
+	ret = copy_from_user_fdset_ptr(&wfds, &wfds_ptr, wfd_addr, n);
+	if (ret)
+		return (ret);
+	ret = copy_from_user_fdset_ptr(&efds, &efds_ptr, efd_addr, n);
+	if (ret)
+		return (ret);
+
+	/* Unlike select(), pselect() uses struct timespec instead of timeval */
+	if (ts_addr) {
+		if (target_to_host_timespec(&ts, ts_addr))
+			return (-TARGET_EFAULT);
+		ts_ptr = &ts;
+	} else {
+		ts_ptr = NULL;
+	}
+
+	if (set_addr) {
+		if (!(p = lock_user(VERIFY_READ, set_addr,
+			    sizeof(target_sigset_t), 1)))
+			return (-TARGET_EFAULT);
+		target_to_host_sigset(&set, p);
+		unlock_user(p, set_addr, 0);
+		set_ptr = &set;
+	} else {
+		set_ptr = NULL;
+	}
+
+	ret = get_errno(pselect(n, rfds_ptr, wfds_ptr, efds_ptr, ts_ptr,
+		set_ptr));
+
+	if (!is_error(ret)) {
+		if (rfd_addr && copy_to_user_fdset(rfd_addr, &rfds, n))
+			return (-TARGET_EFAULT);
+		if (wfd_addr && copy_to_user_fdset(wfd_addr, &wfds, n))
+			return (-TARGET_EFAULT);
+		if (efd_addr && copy_to_user_fdset(efd_addr, &efds, n))
+			return (-TARGET_EFAULT);
+
+		if (ts_addr && host_to_target_timespec(ts_addr, &ts))
 			return (-TARGET_EFAULT);
 	}
 
@@ -1976,10 +2033,16 @@ do_fork(CPUArchState *env, int num, int flags, int *fdp)
 	case TARGET_FREEBSD_NR_fork:
 	case TARGET_FREEBSD_NR_vfork:
 		ret = fork();
+		break;
+
 	case TARGET_FREEBSD_NR_rfork:
 		ret = rfork(flags);
+		break;
+
 	case TARGET_FREEBSD_NR_pdfork:
 		ret = pdfork(&fd, flags);
+		break;
+
 	default:
 		ret = -TARGET_ENOSYS;
 		break;
@@ -2349,7 +2412,7 @@ do_stat:
 			__get_user(tz.tz_dsttime, &target_tz->tz_dsttime);
 			unlock_user_struct(target_tz, arg2, 1);
 		}
-		if (fbsd_copy_from_user_timeval(&tv, arg1))
+		if (copy_from_user_timeval(&tv, arg1))
 			goto efault;
 		ret = get_errno(settimeofday(&tv, arg2 != 0 ? & tz : NULL));
 	}
@@ -2562,6 +2625,10 @@ do_stat:
 	ret = do_freebsd_select(arg1, arg2, arg3, arg4, arg5);
 	break;
 
+    case TARGET_FREEBSD_NR_pselect:
+	ret = do_freebsd_pselect(arg1, arg2, arg3, arg4, arg5, arg6);
+	break;
+
     case TARGET_FREEBSD_NR_poll:
 	{
 		nfds_t i, nfds = arg2;
@@ -2578,7 +2645,6 @@ do_stat:
 			pfd[i].fd = tswap32(target_pfd[i].fd);
 			pfd[i].events = tswap16(target_pfd[i].events);
 		}
-
 		ret = get_errno(poll(pfd, nfds, timeout));
 
 		if (!is_error(ret)) {
@@ -2592,7 +2658,6 @@ do_stat:
 	break;
 
     case TARGET_FREEBSD_NR_openbsd_poll:
-    case TARGET_FREEBSD_NR_pselect:
 	ret = unimplemented(num);
 	break;
 
@@ -2638,8 +2703,8 @@ do_stat:
 
 		if (arg2) {
 			pvalue = &value;
-			if (fbsd_copy_from_user_timeval(&pvalue->it_interval,
-				arg2) || fbsd_copy_from_user_timeval(
+			if (copy_from_user_timeval(&pvalue->it_interval,
+				arg2) || copy_from_user_timeval(
 				&pvalue->it_value, arg2 +
 				sizeof(struct target_timeval)))
 				goto efault;
@@ -2675,8 +2740,8 @@ do_stat:
 		struct timeval *tvp, tv[2];
 
 		if (arg2) {
-			if (fbsd_copy_from_user_timeval(&tv[0], arg2)
-			    || fbsd_copy_from_user_timeval(&tv[1],
+			if (copy_from_user_timeval(&tv[0], arg2)
+			    || copy_from_user_timeval(&tv[1],
 				arg2 + sizeof(struct target_timeval)))
 
 				goto efault;
@@ -2696,8 +2761,8 @@ do_stat:
 		struct timeval *tvp, tv[2];
 
 		if (arg2) {
-			if (fbsd_copy_from_user_timeval(&tv[0], arg2)
-			    || fbsd_copy_from_user_timeval(&tv[1],
+			if (copy_from_user_timeval(&tv[0], arg2)
+			    || copy_from_user_timeval(&tv[1],
 				arg2 + sizeof(struct target_timeval)))
 
 				goto efault;
@@ -2717,8 +2782,8 @@ do_stat:
 		struct timeval *tvp, tv[2];
 
 		if (arg2) {
-			if (fbsd_copy_from_user_timeval(&tv[0], arg2)
-			    || fbsd_copy_from_user_timeval(&tv[1],
+			if (copy_from_user_timeval(&tv[0], arg2)
+			    || copy_from_user_timeval(&tv[1],
 				arg2 + sizeof(struct target_timeval)))
 				goto efault;
 			tvp = tv;
@@ -2734,8 +2799,8 @@ do_stat:
 		struct timeval *tvp, tv[2];
 
 		if (arg3) {
-			if (fbsd_copy_from_user_timeval(&tv[0], arg3)
-			    || fbsd_copy_from_user_timeval(&tv[1],
+			if (copy_from_user_timeval(&tv[0], arg3)
+			    || copy_from_user_timeval(&tv[1],
 				arg3 + sizeof(struct target_timeval)))
 				goto efault;
 			tvp = tv;
@@ -3702,10 +3767,6 @@ do_stat:
     case TARGET_FREEBSD_NR_sigwaitinfo:
     case TARGET_FREEBSD_NR_sigqueue:
 
-    case TARGET_FREEBSD_NR_getcontext:
-    case TARGET_FREEBSD_NR_setcontext:
-    case TARGET_FREEBSD_NR_swapcontext:
-
 #ifdef TARGET_FREEBSD_NR_aio_read
     case TARGET_FREEBSD_NR_aio_read:
 #endif
@@ -3760,6 +3821,10 @@ do_stat:
     case TARGET_FREEBSD_NR_thr_set_name:
     case TARGET_FREEBSD_NR_thr_kill2:
 
+    case TARGET_FREEBSD_NR_getcontext:
+    case TARGET_FREEBSD_NR_setcontext:
+    case TARGET_FREEBSD_NR_swapcontext:
+
     case TARGET_FREEBSD_NR_rtprio_thread:
     case TARGET_FREEBSD_NR_cpuset:
     case TARGET_FREEBSD_NR_cpuset_getid:
@@ -3780,6 +3845,7 @@ do_stat:
     case TARGET_FREEBSD_NR_rctl_get_limits:
 
     case TARGET_FREEBSD_NR_ntp_adjtime:
+    case TARGET_FREEBSD_NR_ntp_gettime:
 
 #ifdef TARGET_FREEBSD_NR_getdomainname
     case TARGET_FREEBSD_NR_getdomainname:
