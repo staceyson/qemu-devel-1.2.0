@@ -2,6 +2,7 @@
  *  Emulation of BSD signals
  *
  *  Copyright (c) 2003 - 2008 Fabrice Bellard
+ *  Copyright (c) 2012 Stacey Son
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -16,10 +17,6 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
-#include <sys/types.h>
-#include <sys/time.h>
-#include <sys/resource.h>
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -27,15 +24,24 @@
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 #include "qemu.h"
 #include "target_signal.h"
 
-#define DEBUG_SIGNAL
+// #define DEBUG_SIGNAL
 
 #ifndef _NSIG
 #define _NSIG	128
 #endif
+
+static target_stack_t target_sigaltstack_used = {
+	.ss_sp = 0,
+	.ss_size = 0,
+	.ss_flags = TARGET_SS_DISABLE,
+};
 
 static uint8_t host_to_target_signal_table[_NSIG] = {
 	[SIGHUP] 	= 	TARGET_SIGHUP,
@@ -94,6 +100,20 @@ static uint8_t target_to_host_signal_table[_NSIG];
 static struct target_sigaction sigact_table[TARGET_NSIG];
 
 static void host_signal_handler(int host_signum, siginfo_t *info, void *puc);
+
+static inline int
+on_sig_stack(unsigned long sp)
+{
+	return (sp - target_sigaltstack_used.ss_sp
+	    < target_sigaltstack_used.ss_size);
+}
+
+static inline int
+sas_ss_flags(unsigned long sp)
+{
+	return (target_sigaltstack_used.ss_size == 0 ? SS_DISABLE
+	    : on_sig_stack(sp) ? SS_ONSTACK : 0);
+}
 
 int
 host_to_target_signal(int sig)
@@ -452,13 +472,66 @@ host_signal_handler(int host_signum, siginfo_t *info, void *puc)
 }
 
 /* do_sigaltstack() returns target values and errnos.  */
-#if 0
+/* compare to kern/kern_sig.c sys_sigaltstack() and kern_sigaltstack() */
 abi_long
-do_signalstack(abi_ulong uss_addr, abi_ulong uoss_addr, abi_ulong sp)
+do_sigaltstack(abi_ulong uss_addr, abi_ulong uoss_addr, abi_ulong sp)
 {
-	fprintf(stderr, "do_signalstack: not implemented\n");
+	int ret = 0;
+	target_stack_t ss, oss, *uss;
+
+	if (uoss_addr) {
+		/* Save current signal stack params */
+		oss.ss_sp = tswapl(target_sigaltstack_used.ss_sp);
+		oss.ss_size = tswapl(target_sigaltstack_used.ss_size);
+		oss.ss_flags = tswapl(sas_ss_flags(sp));
+	}
+
+	if (uss_addr) {
+
+		if (!lock_user_struct(VERIFY_READ, uss, uss_addr, 1) ||
+		    __get_user(ss.ss_sp, &uss->ss_sp) ||
+		    __get_user(ss.ss_size, &uss->ss_size) ||
+		    __get_user(ss.ss_flags, &uss->ss_flags)) {
+			ret = -TARGET_EFAULT;
+			goto out;
+		}
+		unlock_user_struct(uss, uss_addr, 0);
+
+		if (on_sig_stack(sp)) {
+			ret = -TARGET_EPERM;
+			goto out;
+		}
+
+		if ((ss.ss_flags & ~TARGET_SS_DISABLE) != 0) {
+			ret = -TARGET_EINVAL;
+			goto out;
+		}
+
+		if (!(ss.ss_flags & ~TARGET_SS_DISABLE)) {
+			if (ss.ss_size < TARGET_MINSIGSTKSZ) {
+				ret = -TARGET_ENOMEM;
+				goto out;
+			}
+		} else {
+			ss.ss_size = 0;
+			ss.ss_sp = 0;
+		}
+
+		target_sigaltstack_used.ss_sp = ss.ss_sp;
+		target_sigaltstack_used.ss_size = ss.ss_size;
+	}
+
+	if (uoss_addr) {
+		/* Copy out to user saved signal stack params */
+		if (copy_to_user(uoss_addr, &oss, sizeof(oss))) {
+			ret = -TARGET_EFAULT;
+			goto out;
+		}
+	}
+
+out:
+	return (ret);
 }
-#endif
 
 static int
 fatal_signal(int sig)
@@ -544,41 +617,201 @@ do_sigaction(int sig, const struct target_sigaction *act,
 	return (ret);
 }
 
-#ifdef TARGET_MIPS
+#if defined(TARGET_MIPS64)
+static inline int
+restore_sigmcontext(CPUMIPSState *regs, target_mcontext_t *mc)
+{
+	int i, err = 0;
 
-struct target_sigcontext {
-	target_sigset_t		sc_mask;	/* signal mask to retstore */
-	int32_t			sc_onstack;	/* sigstack state to restore */
-	abi_long		sc_pc;		/* pc at time of signal */
-	abi_long		sc_reg[32];	/* processor regs 0 to 31 */
-	abi_long		mullo, mulhi;	/* mullo and mulhi registers */
-	int32_t 		sc_fpused;	/* fp has been used */
-	abi_long		sc_fpregs[33];	/* fp regs 0 to 31 & csr */
-	abi_long		sc_fpc_eir;	/* fp exception instr reg */
-	/* int32_t reserved[8]; */
-};
+	for(i = 1; i < 32; i++)
+		err |= __get_user(regs->active_tc.gpr[i],
+		    &mc->mc_regs[i]);
+	err |= __get_user(regs->CP0_EPC, &mc->mc_pc);
+	err |= __get_user(regs->active_tc.LO[0], &mc->mullo);
+	err |= __get_user(regs->active_tc.HI[0], &mc->mulhi);
+	err |= __get_user(regs->tls_value, &mc->mc_tls); /* XXX thread tls */
 
-typedef struct target_mcontext {
-	int32_t			tmc_onstack;	/* sigstack state to restore */
-	abi_long		tmc_pc;		/* pc at time of signal */
-	abi_long		tmc_regs[32];	/* process regs 0 to 31 */
-	abi_long		sr;		/* status register */
-	int32_t			tmc_fpused;	/* fp has been used */
-	abi_long		tmc_fpregs[33];	/* fp regs 0 to 32 & csr */
-	abi_long		tmc_fpc_eir;	/* fp exception instr reg */
-	abi_ulong		tmc_tls;	/* pointer to TLS area */
-} target_mcontext_t;
+#if 0	/* XXX */
+	int used_fp = 0;
 
-struct target_ucontext {
-	target_ulong		tuc_flags;
-	target_ulong		tuc_link;
-	target_stack_t		tuc_stack;
-	target_mcontext_t	tuc_mcontext;
-	target_ulong		tuc_filer[80];
-	target_sigset_t		tuc_sigmask;
-};
+	err |= __get_user(used_fp, &mc->mc_fpused);
+	conditional_used_math(used_fp);
 
-#endif /* TARGET_MIPS */
+	preempt_disabled();
+	if (used_math()) {
+		/* restore fpu context if we have used it before */
+		own_fpu();
+		err |= restore_fp_context(mc);
+	} else {
+		/* signal handler may have used FPU. Give it up. */
+		lose_fpu();
+	}
+	preempt_enable();
+#endif
+
+	return (err);
+}
+
+static inline int
+setup_sigmcontext(CPUMIPSState *regs, target_mcontext_t *mc, int32_t oonstack)
+{
+	int i, err = 0;
+	abi_long ucontext_magic = TARGET_UCONTEXT_MAGIC;
+
+	err  = __put_user(oonstack ? 1 : 0, &mc->mc_onstack);
+	err |= __put_user(regs->active_tc.PC, &mc->mc_pc);
+	err |= __put_user(regs->active_tc.LO[0], &mc->mullo);
+	err |= __put_user(regs->active_tc.HI[0], &mc->mulhi);
+	err |= __put_user(regs->tls_value, &mc->mc_tls);  /* XXX thread tls */
+
+	err |= __put_user(ucontext_magic, &mc->mc_regs[0]);
+	for(i = 1; i < 32; i++)
+		err |= __put_user(regs->active_tc.gpr[i], &mc->mc_regs[i]);
+
+	err |= __put_user(0, &mc->mc_fpused);
+
+#if 0	/* XXX */
+	err |= __put_user(used_math(), &mc->mc_fpused);
+	if (used_math())
+		goto out;
+
+	/*
+	 * Save FPU state to signal context. Signal handler will "inherit"
+	 * current FPU state.
+	 */
+	preempt_disable();
+
+	if (!is_fpu_owner()) {
+		own_fpu();
+		for(i = 0; i < 33; i++)
+			err |= __put_user(regs->active_tc.fpregs[i], &mc->mc_fpregs[i]);
+	}
+	err |= save_fp_context(fg);
+
+	preempt_enable();
+out:
+#endif
+	return (err);
+}
+
+static inline abi_ulong
+get_sigframe(struct target_sigaction *ka, CPUMIPSState *regs, size_t frame_size)
+{
+	abi_ulong sp;
+
+	/* Use default user stack */
+	sp = regs->active_tc.gpr[29];
+
+	if ((ka->sa_flags & TARGET_SA_ONSTACK) && (sas_ss_flags(sp) == 0)) {
+		sp = target_sigaltstack_used.ss_sp + target_sigaltstack_used.ss_size;
+	}
+
+	return ((sp - frame_size) & ~7);
+}
+
+/* compare to mips/mips/pm_machdep.c sendsig() */
+static void setup_frame(int sig, struct target_sigaction *ka,
+    target_sigset_t *set, CPUMIPSState *regs)
+{
+	struct target_sigframe *frame;
+	abi_ulong frame_addr;
+	struct unc;
+	int i;
+
+#ifdef DEBUG_SIGNAL
+	fprintf(stderr, "setup_frame()\n");
+#endif
+
+	frame_addr = get_sigframe(ka, regs, sizeof(*frame));
+	if (!lock_user_struct(VERIFY_WRITE, frame, frame_addr, 0))
+		goto give_sigsegv;
+
+	if (setup_sigmcontext(regs, &frame->sf_uc.uc_mcontext,
+		! on_sig_stack(frame_addr)))
+		goto give_sigsegv;
+
+	for(i = 0; i < TARGET_NSIG_WORDS; i++) {
+		if (__put_user(set->sig[i], &frame->sf_uc.uc_sigmask.sig[i]))
+			goto give_sigsegv;
+	}
+
+	/* fill in sigframe structure */
+	if (__put_user(sig, &frame->sf_signum))
+		goto give_sigsegv;
+	if (__put_user(0, &frame->sf_siginfo))
+		goto give_sigsegv;
+	if (__put_user(0, &frame->sf_ucontext))
+		goto give_sigsegv;
+
+	/* fill in siginfo structure */
+	if (__put_user(sig, &frame->sf_si.si_signo))
+		goto give_sigsegv;
+	if (__put_user(TARGET_SA_SIGINFO, &frame->sf_si.si_code))
+		goto give_sigsegv;
+	if (__put_user(regs->CP0_BadVAddr, &frame->sf_si.si_addr))
+		goto give_sigsegv;
+
+	/*
+	 * Arguments to signal handler:
+	 * 	a0 ($4) = signal number
+	 * 	a1 ($5) = siginfo pointer
+	 * 	a2 ($6) = ucontext pointer
+	 * 	PC = signal handler pointer
+	 * 	t9 ($25) = signal handler pointer
+	 * 	$29 = point to sigframe struct
+	 * 	ra ($31) = sigtramp at base of user stack
+	 */
+	regs->active_tc.gpr[ 4] = sig;
+	regs->active_tc.gpr[ 5] = frame_addr +
+	    offsetof(struct target_sigframe, sf_si);
+	regs->active_tc.gpr[ 6] = frame_addr +
+	    offsetof(struct target_sigframe, sf_uc);
+	regs->active_tc.gpr[25] = regs->active_tc.PC = ka->_sa_handler;
+	regs->active_tc.gpr[29] = frame_addr;
+	regs->active_tc.gpr[31] = TARGET_PS_STRINGS - TARGET_SZSIGCODE;
+	unlock_user_struct(frame, frame_addr, 1);
+	return;
+
+give_sigsegv:
+	unlock_user_struct(frame, frame_addr, 1);
+	force_sig(TARGET_SIGSEGV);
+}
+
+long
+do_sigreturn(CPUMIPSState *regs, abi_ulong uc_addr)
+{
+	target_ucontext_t *ucontext;
+	sigset_t blocked;
+	target_sigset_t target_set;
+	int i;
+
+#if defined(DEBUG_SIGNAL)
+	fprintf(stderr, "do_sigreturn\n");
+#endif
+	if (!lock_user_struct(VERIFY_READ, ucontext, uc_addr, 1))
+		goto badframe;
+
+	for(i = 0; i < TARGET_NSIG_WORDS; i++) {
+		if (__get_user(target_set.sig[i], &ucontext->uc_sigmask.sig[i]))
+			goto badframe;
+	}
+
+	if (restore_sigmcontext(regs, &ucontext->uc_mcontext))
+		goto badframe;
+
+	target_to_host_sigset_internal(&blocked, &target_set);
+	sigprocmask(SIG_SETMASK, &blocked, NULL);
+
+	regs->active_tc.PC = regs->CP0_EPC;
+	regs->CP0_EPC = 0;  /* XXX  for nested signals ? */
+	return (-TARGET_QEMU_ESIGRETURN);
+
+badframe:
+	force_sig(TARGET_SIGSEGV);
+	return (0);
+}
+
+#else
 
 static void
 setup_frame(int sig, struct target_sigaction *ka, target_sigset_t *set,
@@ -587,15 +820,17 @@ setup_frame(int sig, struct target_sigaction *ka, target_sigset_t *set,
 	fprintf(stderr, "setup_frame: not implemented\n");
 }
 
+#if 0
 static void
 setup_rt_frame(int sig, struct target_sigaction *ka, target_siginfo_t *info,
     target_sigset_t *set, CPUArchState *env)
 {
 	fprintf(stderr, "setup_rt_frame: not implemented\n");
 }
+#endif
 
 long
-do_sigreturn(CPUArchState *env)
+do_sigreturn(CPUArchState *env, abi_ulong uc_addr)
 {
 	fprintf(stderr,"do_sigreturn: not implemented\n");
 	return (-TARGET_ENOSYS);
@@ -607,6 +842,7 @@ do_rt_sigreturn(CPUArchState *env)
 	fprintf(stderr, "do_rt_sigreturn: not implemented\n");
 	return (-TARGET_ENOSYS);
 }
+#endif
 
 void
 signal_init(void)
@@ -707,6 +943,9 @@ handle_signal:
 	}
 
 	if (handler == TARGET_SIG_DFL) {
+#ifdef DEBUG_SIGNAL
+	fprintf(stderr, "qemu: TARGET_SIG_DFL\n");
+#endif
 		/*
 		 * default handler : ignore some signal. The other are job
 		 * control or fatal.
@@ -720,7 +959,13 @@ handle_signal:
 		}
 	} else if (TARGET_SIG_IGN == handler) {
 		/* ignore sig */
+#ifdef DEBUG_SIGNAL
+	fprintf(stderr, "qemu: TARGET_SIG_IGN\n");
+#endif
 	} else if (TARGET_SIG_ERR == handler) {
+#ifdef DEBUG_SIGNAL
+	fprintf(stderr, "qemu: TARGET_SIG_ERR\n");
+#endif
 		force_sig(sig);
 	} else {
 		/* compute the blocked signals during the handler execution */
@@ -752,11 +997,13 @@ handle_signal:
 #endif
 #endif
 		/* prepare the stack frame of the virtual CPU */
+#if 0  /* XXX no rt for fbsd */
 		 if (sa->sa_flags & TARGET_SA_SIGINFO)
 			 setup_rt_frame(sig, sa, &q->info, &target_old_set,
 			     cpu_env);
 		 else
-			 setup_frame(sig, sa, &target_old_set, cpu_env);
+#endif
+		 setup_frame(sig, sa, &target_old_set, cpu_env);
 		 if (sa->sa_flags & TARGET_SA_RESETHAND)
 			 sa->_sa_handler = TARGET_SIG_DFL;
 	}

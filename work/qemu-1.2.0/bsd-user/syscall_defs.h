@@ -103,8 +103,12 @@
 
 #define TARGET_BADSIG          SIG_ERR
 
+/*
+ * sigaltstack controls
+ */
 #define TARGET_SS_ONSTACK       0x0001  /* take signals on alternate stack */
-#define TARGET_SS_DISABLE       0x0004  /* disable taking signals on alternate stack */
+#define TARGET_SS_DISABLE       0x0004  /* disable taking signals on alternate
+					   stack */
 
 #define TARGET_NSIG		128
 #define	TARGET_NSIG_BPW		TARGET_ABI_BITS
@@ -409,6 +413,13 @@ struct target_shmid_ds {
 	abi_ulong	shm_ctime;	/* time of last change by shmctl() */
 };
 
+/* this struct defines a stack used during syscall handling */
+typedef struct target_sigaltstack {
+	abi_long	ss_sp;
+	abi_ulong	ss_size;
+	abi_long	ss_flags;
+} target_stack_t;
+
 typedef struct {
 	abi_ulong sig[TARGET_NSIG_WORDS];
 } target_sigset_t;
@@ -462,6 +473,49 @@ typedef struct target_siginfo {
 		} __spare__;
 	} _reason;
 } target_siginfo_t;
+
+struct target_sigcontext {
+	target_sigset_t	sc_mask;        /* signal mask to retstore */
+	int32_t		sc_onstack;     /* sigstack state to restore */
+	abi_long	sc_pc;          /* pc at time of signal */
+	abi_long	sc_reg[32];     /* processor regs 0 to 31 */
+	abi_long	mullo, mulhi;   /* mullo and mulhi registers */
+	int32_t		sc_fpused;      /* fp has been used */
+	abi_long	sc_fpregs[33];  /* fp regs 0 to 31 & csr */
+	abi_long	sc_fpc_eir;     /* fp exception instr reg */
+	/* int32_t reserved[8]; */
+};
+
+typedef struct target_mcontext {
+	int32_t		mc_onstack;    /* sigstack state to restore */
+	abi_long	mc_pc;         /* pc at time of signal */
+	abi_long	mc_regs[32];   /* process regs 0 to 31 */
+	abi_long	sr;             /* status register */
+	abi_long	mullo, mulhi;
+	int32_t		mc_fpused;     /* fp has been used */
+	abi_long	mc_fpregs[33]; /* fp regs 0 to 32 & csr */
+	abi_long	mc_fpc_eir;    /* fp exception instr reg */
+	abi_ulong	mc_tls;        /* pointer to TLS area */
+} target_mcontext_t;
+
+typedef struct target_ucontext {
+	target_ulong		uc_flags;
+	target_ulong		uc_link;
+	target_stack_t		uc_stack;
+	target_mcontext_t	uc_mcontext;
+	target_ulong		uc_filer[80];
+	target_sigset_t		uc_sigmask;
+} target_ucontext_t;
+
+struct target_sigframe {
+	abi_ulong	sf_signum;
+	abi_ulong	sf_siginfo;	/* code or pointer to sf_si */
+	abi_ulong	sf_ucontext;	/* points to sf_uc */
+	abi_ulong	sf_addr;	/* undocumented 4th arg */
+	target_ucontext_t	sf_uc;	/* = *sf_uncontext */
+	target_siginfo_t	sf_si;	/* = *sf_siginfo (SA_SIGINFO case)*/
+	uint32_t	__spare__[2];
+};
 
 #ifdef BSWAP_NEEDED
 static inline void

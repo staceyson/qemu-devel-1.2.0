@@ -3,17 +3,16 @@
 
 #include "cpu.h"
 
-/* this struct defines a stack used during syscall handling */
-
-typedef struct target_sigaltstack {
-	abi_ulong ss_sp;
-	abi_long ss_flags;
-	abi_ulong ss_size;
-} target_stack_t;
-
 static inline abi_ulong get_sp_from_cpustate(CPUX86State *state)
 {
     return state->regs[R_ESP];
 }
+
+#define	TARGET_SS_ONSTACK	0x0001	/* take signal on alternate stack */
+#define	TARGET_SS_DISABLE	0x0004	/* disable taking signals on
+					   alternate stack */
+
+#define	TARGET_MINSIGSTKSZ	(512 * 4)
+#define	TARGET_SIGSTKSZ		(TARGET_MINSIGSTKSZ + 32768)
 
 #endif /* TARGET_SIGNAL_H */

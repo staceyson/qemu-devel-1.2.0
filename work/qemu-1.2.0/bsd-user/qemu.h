@@ -20,9 +20,13 @@ enum BSDType {
 };
 extern enum BSDType bsd_type;
 
+abi_long memcpy_to_target(abi_ulong dest, const void *src,
+                          unsigned long len);
+
 #include "syscall_defs.h"
 #include "syscall.h"
 #include "target_signal.h"
+#include "target_vmparam.h"
 #include "gdbstub.h"
 
 #if defined(CONFIG_USE_NPTL)
@@ -143,8 +147,6 @@ int load_elf_binary(struct bsd_binprm * bprm, struct target_pt_regs * regs,
 int load_flt_binary(struct bsd_binprm * bprm, struct target_pt_regs * regs,
                     struct image_info * info);
 
-abi_long memcpy_to_target(abi_ulong dest, const void *src,
-                          unsigned long len);
 void target_set_brk(abi_ulong new_brk);
 abi_long do_brk(abi_ulong new_brk);
 void syscall_init(void);
@@ -194,7 +196,7 @@ void host_to_target_siginfo(target_siginfo_t *tinfo, const siginfo_t *info);
 void target_to_host_siginfo(siginfo_t *info, const target_siginfo_t *tinfo);
 int target_to_host_signal(int sig);
 int host_to_target_signal(int sig);
-long do_sigreturn(CPUArchState *env);
+long do_sigreturn(CPUArchState *env, abi_ulong uc_addr);
 long do_rt_sigreturn(CPUArchState *env);
 abi_long do_sigaltstack(abi_ulong uss_addr, abi_ulong uoss_addr, abi_ulong sp);
 

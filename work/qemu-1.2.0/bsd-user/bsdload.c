@@ -161,7 +161,7 @@ int loader_exec(const char * filename, char ** argv, char ** envp,
     int retval;
     int i;
 
-    bprm->p = TARGET_PAGE_SIZE*MAX_ARG_PAGES-sizeof(unsigned int);
+    bprm->p = TARGET_PAGE_SIZE*MAX_ARG_PAGES /*-sizeof(unsigned int) XXX */;
     for (i=0 ; i<MAX_ARG_PAGES ; i++)       /* clear page-table */
             bprm->page[i] = NULL;
     retval = open(filename, O_RDONLY);

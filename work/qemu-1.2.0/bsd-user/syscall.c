@@ -3853,8 +3853,7 @@ do_stat:
 	 break;
 
     case TARGET_FREEBSD_NR_sigreturn:
-	 /* ret = do_sigreturn(cpu_env); */
-	 ret = unimplemented(num);
+	 ret = do_sigreturn(cpu_env, arg1);
 	 break;
 
 #ifdef TARGET_FREEBSD_NR_sigvec
@@ -3953,6 +3952,13 @@ do_stat:
 			 value));
 	 }
 	 break;
+
+    case TARGET_FREEBSD_NR_sigaltstack:
+	 {
+
+		 ret = do_sigaltstack(arg1, arg2,
+		     get_sp_from_cpustate((CPUArchState *)cpu_env));
+	 }
 
 #ifdef TARGET_FREEBSD_NR_aio_read
     case TARGET_FREEBSD_NR_aio_read:

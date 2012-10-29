@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/param.h>
+
 #include "qemu.h"
 #include "disas.h"
 
@@ -93,6 +95,7 @@ enum {
 
 #ifdef TARGET_I386
 
+#ifndef __FreeBSD__
 #define ELF_PLATFORM get_elf_platform()
 
 static const char *get_elf_platform(void)
@@ -112,6 +115,7 @@ static uint32_t get_elf_hwcap(void)
 {
   return thread_env->cpuid_features;
 }
+#endif /* ! __FreeBSD__ */
 
 #ifdef TARGET_X86_64
 #define ELF_START_MMAP 0x2aaaaab000ULL
@@ -683,6 +687,25 @@ static abi_ulong copy_elf_strings(int argc,char ** argv, void **page,
     return p;
 }
 
+#if defined(TARGET_MIPS64)
+static inline int
+install_sigtramp(abi_ulong offset, unsigned sigf_uc, unsigned syscall)
+{
+	int i;
+	uint32_t sigtrap_code[] = {
+		0x67A40000 + sigf_uc,   /* daddu   $a0, $sp, (sigf_uc) */
+		0x24020000 + syscall,   /* li      $v0, (syscall) */
+		0x0000000C,             /* syscall */
+		0x0000000D              /* break */
+	};
+
+	for(i = 0; i < 4; i++)
+		tswap32s(&sigtrap_code[i]);
+
+	return (memcpy_to_target(offset, sigtrap_code, TARGET_SZSIGCODE));
+}
+#endif
+
 static abi_ulong setup_arg_pages(abi_ulong p, struct bsd_binprm *bprm,
                                  struct image_info *info)
 {
@@ -695,7 +718,13 @@ static abi_ulong setup_arg_pages(abi_ulong p, struct bsd_binprm *bprm,
     size = x86_stack_size;
     if (size < MAX_ARG_PAGES*TARGET_PAGE_SIZE)
         size = MAX_ARG_PAGES*TARGET_PAGE_SIZE;
-    error = target_mmap(0,
+
+#ifdef TARGET_USRSTACK
+    stack_base = TARGET_USRSTACK - size;
+#else
+    stack_base = (abi_ulong)0;
+#endif
+    error = target_mmap(stack_base,
                         size + qemu_host_page_size,
                         PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANON,
@@ -706,6 +735,113 @@ static abi_ulong setup_arg_pages(abi_ulong p, struct bsd_binprm *bprm,
     }
     /* we reserve one extra page at the top of the stack as guard */
     target_mprotect(error + size, qemu_host_page_size, PROT_NONE);
+
+#if defined(__FreeBSD__)
+    /*
+     * The inital FreeBSD stack looks like follows:
+     * (see kern/kern_exec.c exec_copyout_strings() )
+     *
+     *  Hi Address -> char **ps_argvstr  (struct ps_strings for ps, w, etc.)
+     *                unsigned ps_nargvstr
+     *                char **ps_envstr
+     *  PS_STRINGS -> unsigned ps_nenvstr
+     *
+     *                machine dependent sigcode (sv_sigcode of size
+     *                                           sv_szsigcode)
+     *
+     *                execpath          (absolute image path for rtld)
+     *
+     *                SSP Canary        (sizeof(long) * 8)
+     *
+     *                page sizes array  (usually sizeof(u_long) )
+     *
+     *  "destp" ->    argv, env strings (up to 262144 bytes)
+     */
+
+    {
+	    abi_ulong stack_hi_addr;
+	    size_t execpath_len;
+	    abi_ulong destp;
+	    struct target_ps_strings ps_strs;
+	    char canary[sizeof(abi_long) * 8];
+	    char execpath[PATH_MAX];
+
+	    stack_hi_addr = p = error + size;
+
+	    /* Save some space for ps_strings. */
+	    p -= sizeof(struct target_ps_strings);
+
+#if TARGET_SZSIGCODE > 0
+	    /* Add machine depedent sigcode. */
+	    p -= TARGET_SZSIGCODE;
+	    /* XXX - check return value of memcpy_to_target() for failure */
+	    install_sigtramp( p, (unsigned)offsetof(struct target_sigframe,
+		    sf_uc), TARGET_FREEBSD_NR_sigreturn);
+#endif
+
+	    /* Add execpath for rtld. */
+	    if (strlen(bprm->filename)) {
+		    /* XXX - check return value of realpath() */
+		    realpath(bprm->filename, execpath);
+		    execpath_len = strlen(execpath) + 1;
+	    } else
+		    execpath_len = 0;
+
+	    if (execpath_len) {
+		    p -= roundup(execpath_len, sizeof(abi_ulong));
+		    /* XXX - check return value of memcpy_to_target() */
+		    memcpy_to_target(p, execpath, execpath_len);
+	    }
+
+	    /* Add canary for SSP. */
+	    arc4random_buf(canary, sizeof(canary));
+	    p -= roundup(sizeof(canary), sizeof(abi_ulong));
+	    /* XXX - check return value of memcpy_to_target(). */
+	    memcpy_to_target(p, canary, sizeof(canary));
+
+	    /* Add page sizes array. */
+	    p -= sizeof(abi_ulong);
+	    /* XXX - check return value of put_user_ual(). */
+	    put_user_ual(TARGET_PAGE_SIZE, p);
+
+	    p = destp = p - TARGET_SPACE_USRSPACE - TARGET_ARG_MAX;
+
+	    /* XXX should check strlen(argv and envp strings) < TARGET_ARG_MAX */
+
+	    /*
+	     * Add argv strings.  Note that the argv[] vectors are added by
+	     * loader_build_argptr()
+	     */
+	    i = bprm->argc;
+	    while (i-- > 0) {
+		    size_t len = strlen(bprm->argv[i]) + 1;
+		    /* XXX - check return value of memcpy_to_target(). */
+		    memcpy_to_target(destp, bprm->argv[i], len);
+		    destp += len;
+	    }
+	    ps_strs.ps_argvstr = tswapl(destp);
+	    ps_strs.ps_nargvstr = tswap32(bprm->argc);
+
+	    /*
+	     * Add env strings. Note that the envp[] vectors are added by
+	     * loader_build_argptr().
+	     */
+	    i = bprm->envc;
+	    while(i-- > 0) {
+		    size_t len = strlen(bprm->envp[i]) + 1;
+		    /* XXX - check return value of memcpy_to_target(). */
+		    memcpy_to_target(destp, bprm->envp[i], len);
+		    destp += len;
+	    }
+	    ps_strs.ps_envstr = tswapl(destp);
+	    ps_strs.ps_nenvstr = tswap32(bprm->envc);
+
+	    /* XXX - check return value of memcpy_to_target(). */
+	    memcpy_to_target(stack_hi_addr - sizeof(ps_strs), &ps_strs,
+		sizeof(ps_strs));
+    }
+
+#else
 
     stack_base = error + size - MAX_ARG_PAGES*TARGET_PAGE_SIZE;
     p += stack_base;
@@ -719,6 +855,8 @@ static abi_ulong setup_arg_pages(abi_ulong p, struct bsd_binprm *bprm,
         }
         stack_base += TARGET_PAGE_SIZE;
     }
+#endif
+
     return p;
 }
 
@@ -786,11 +924,14 @@ static abi_ulong create_elf_tables(abi_ulong p, int argc, int envc,
 {
         abi_ulong sp;
         int size;
+#ifndef __FreeBSD__
         abi_ulong u_platform;
         const char *k_platform;
+#endif
         const int n = sizeof(elf_addr_t);
 
         sp = p;
+#ifndef __FreeBSD__
         u_platform = 0;
         k_platform = ELF_PLATFORM;
         if (k_platform) {
@@ -800,22 +941,28 @@ static abi_ulong create_elf_tables(abi_ulong p, int argc, int envc,
             /* FIXME - check return value of memcpy_to_target() for failure */
             memcpy_to_target(sp, k_platform, len);
         }
+#endif /* ! __FreeBSD__ */
         /*
          * Force 16 byte _final_ alignment here for generality.
          */
         sp = sp &~ (abi_ulong)15;
+#ifdef __FreeBSD__
+	size = 0;
+#else
         size = (DLINFO_ITEMS + 1) * 2;
         if (k_platform)
           size += 2;
 #ifdef DLINFO_ARCH_ITEMS
         size += DLINFO_ARCH_ITEMS * 2;
 #endif
+#endif /* ! __FreeBSD__ */
         size += envc + argc + 2;
         size += (!ibcs ? 3 : 1);        /* argc itself */
         size *= n;
         if (size & 15)
             sp -= 16 - (size & 15);
 
+#ifndef __FreeBSD__
         /* This is correct because Linux defines
          * elf_addr_t as Elf32_Off / Elf64_Off
          */
@@ -850,6 +997,7 @@ static abi_ulong create_elf_tables(abi_ulong p, int argc, int envc,
         ARCH_DLINFO;
 #endif
 #undef NEW_AUX_ENT
+#endif /* ! __FreeBSD__ */
 
         sp = loader_build_argptr(envc, argc, sp, p, !ibcs);
         return sp;
@@ -1190,12 +1338,14 @@ int load_elf_binary(struct bsd_binprm * bprm, struct target_pt_regs * regs,
             return -ENOEXEC;
     }
 
+#ifndef __FreeBSD__
     bprm->p = copy_elf_strings(1, &bprm->filename, bprm->page, bprm->p);
     bprm->p = copy_elf_strings(bprm->envc,bprm->envp,bprm->page,bprm->p);
     bprm->p = copy_elf_strings(bprm->argc,bprm->argv,bprm->page,bprm->p);
     if (!bprm->p) {
         retval = -E2BIG;
     }
+#endif /* ! __FreeBSD__ */
 
     /* Now read in all of the header information */
     elf_phdata = (struct elf_phdr *)malloc(elf_ex.e_phentsize*elf_ex.e_phnum);
