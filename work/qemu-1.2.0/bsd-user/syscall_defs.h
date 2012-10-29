@@ -106,6 +106,10 @@
 #define TARGET_SS_ONSTACK       0x0001  /* take signals on alternate stack */
 #define TARGET_SS_DISABLE       0x0004  /* disable taking signals on alternate stack */
 
+#define TARGET_NSIG		128
+#define	TARGET_NSIG_BPW		TARGET_ABI_BITS
+#define	TARGET_NSIG_WORDS	(TARGET_NSIG / TARGET_NSIG_BPW)
+
 /*
  * si_code values
  * Digital reserves positive values for kernel-generated signals.
@@ -265,14 +269,6 @@ struct target_timeval {
 
 typedef abi_long target_clock_t;
 
-#define	TARGET_NSIG		128
-#define	TARGET_NSIG_BPW		TARGET_ABI_BITS
-#define	TARGET_NSIG_WORDS	(TARGET_NSIG / TARGET_NSIG_BPW)
-
-typedef struct {
-	abi_ulong sig[TARGET_NSIG_WORDS];
-} target_sigset_t;
-
 struct target_rusage {
 	struct target_timeval ru_utime;	/* user time used */
 	struct target_timeval ru_stime;	/* system time used */
@@ -291,110 +287,6 @@ struct target_rusage {
 	abi_long    ru_nvcsw;		/* voluntary context switches */
 	abi_long    ru_nivcsw;		/* involuntary context switches */
 };
-
-#ifdef BSWAP_NEEDED
-static inline void
-tswap_sigset(target_sigset_t *d, const target_sigset_t *s)
-{
-	int i;
-
-	for(i = 0; i < TARGET_NSIG_WORDS; i++)
-		d->sig[i] = tswapal(s->sig[i]);
-}
-#else
-static inline void
-tswap_sigset(target_sigset_t *d, const target_sigset_t *s)
-{
-	*d = *s;
-}
-#endif
-
-static inline void
-target_siginitset(target_sigset_t *d, abi_ulong set)
-{
-	int i;
-
-	d->sig[0] = set;
-	for(i = 1; i < TARGET_NSIG_WORDS; i++)
-		d->sig[i] = 0;
-}
-
-void host_to_target_sigset(target_sigset_t *d, const sigset_t *s);
-void target_to_host_sigset(sigset_t *d, const target_sigset_t *s);
-void host_to_target_old_sigset(abi_ulong *old_sigset, const sigset_t *sigset);
-void target_to_host_old_sigset(sigset_t *sigset, const abi_ulong *old_sigset);
-struct target_sigaction;
-int do_sigaction(int sig, const struct target_sigaction *act,
-    struct target_sigaction *oact);
-
-
-struct target_sigaction {
-	abi_ulong	 _sa_handler;
-	abi_ulong	sa_flags;
-	target_sigset_t	sa_mask;
-};
-
-typedef union target_sigval {
-	int sival_int;
-	abi_ulong sival_ptr;
-} target_sigval_t;
-
-#define	TARGET_SI_MAX_SIZE	128
-#define TARGET_SI_PAD_SIZE	((TARGET_SI_MAX_SIZE/sizeof(int)) - 3)
-
-typedef struct target_siginfo {
-#ifdef TARGET_MIPS
-	int si_signo;
-	int si_code;
-	int si_errno;
-#else
-	int si_signo;
-	int si_errno;
-	int si_code;
-#endif
-	union {
-		int _pad[TARGET_SI_PAD_SIZE];
-
-		/* kill() */
-		struct {
-			pid_t _pid;	/* sender's pid */
-			uid_t _uid;	/* sender's uid */
-		} _kill;
-
-		/* POSIX.1b timers */
-		struct {
-			unsigned int _timer1;
-			unsigned int _timer2;
-		} _timer;
-
-		/* POSIX.1b signals */
-		struct {
-			pid_t _pid;	/* sender's pid */
-			uid_t _uid;	/* sender's uid */
-			target_sigval_t _sigval;
-		} _rt;
-
-		/* SIGCHLD */
-		struct {
-			pid_t _pid;	/* which child */
-			uid_t _uid;	/* sender's uid */
-			int  _status;	/* exit code */
-			target_clock_t _utime;
-			target_clock_t _stime;
-		} _sigchld;
-
-		/* SIGILL, SIGFPE, SIGSEGV, SIGBUS */
-		struct {
-			abi_ulong _addr; /* faulting insn/memory ref. */
-		} _sigfault;
-
-		/* SIGPOLL */
-		struct {
-			int _band;	/* POLL_IN, POLL_OUT, POLL_MSG */
-			int _fd;
-		} _sigpoll;
-	} _sifields;
-} target_siginfo_t;
 
 struct target_kevent {
     abi_ulong  ident;
@@ -516,3 +408,95 @@ struct target_shmid_ds {
 	abi_ulong	shm_dtime;	/* time of last shmdt() */
 	abi_ulong	shm_ctime;	/* time of last change by shmctl() */
 };
+
+typedef struct {
+	abi_ulong sig[TARGET_NSIG_WORDS];
+} target_sigset_t;
+
+struct target_sigaction {
+	abi_ulong	_sa_handler;
+	abi_ulong	sa_flags;
+	target_sigset_t	sa_mask;
+};
+
+union target_sigval {
+	int32_t	sival_int;
+	abi_ulong sival_ptr;
+	int32_t	sigval_int;
+	abi_ulong sigval_ptr;
+};
+
+typedef struct target_siginfo {
+	int32_t si_signo;	/* signal number */
+	int32_t si_errno;	/* errno association */
+	int32_t si_code;	/* signal code */
+	int32_t	si_pid;		/* sending process */
+	int32_t	si_uid;		/* sender's ruid */
+	abi_ulong si_addr;	/* faulting instruction */
+
+	union target_sigval si_value;	/* signal value */
+
+	union {
+		struct {
+			int32_t	_trapno;	/* machine specific trap code */
+		} _fault;
+
+		/* POSIX.1b timers */
+		struct {
+			int32_t _timerid;
+			int32_t _overrun;
+		} _timer;
+
+		struct {
+			int32_t _mqd;
+		} _mesgp;
+
+		/* SIGPOLL */
+		struct {
+			int _band;	/* POLL_IN, POLL_OUT, POLL_MSG */
+		} _poll;
+
+		struct {
+			abi_long __spare1__;
+			int32_t  __spare2_[7];
+		} __spare__;
+	} _reason;
+} target_siginfo_t;
+
+#ifdef BSWAP_NEEDED
+static inline void
+tswap_sigset(target_sigset_t *d, const target_sigset_t *s)
+{
+	int i;
+
+	for(i = 0;i < TARGET_NSIG_WORDS; i++)
+		d->sig[i] = tswapal(s->sig[i]);
+}
+
+#else
+static inline void
+tswap_sigset(target_sigset_t *d, const target_sigset_t *s)
+{
+
+	*d = *s;
+}
+#endif
+
+/* XXX
+static inline void
+target_siginitset(target_sigset_t *d, abi_ulong set)
+{
+	int i;
+
+	d->sig[0] = set;
+	for(i = 1;i < TARGET_NSIG_WORDS; i++)
+		d->sig[i] = 0;
+}
+*/
+
+void host_to_target_sigset(target_sigset_t *d, const sigset_t *s);
+void target_to_host_sigset(sigset_t *d, const target_sigset_t *s);
+void host_to_target_old_sigset(abi_ulong *old_sigset, const sigset_t *sigset);
+void target_to_host_old_sigset(sigset_t *sigset, const abi_ulong *old_sigset);
+int do_sigaction(int sig, const struct target_sigaction *act,
+    struct target_sigaction *oact);

@@ -34,11 +34,11 @@
 #undef EDI
 #undef EIP
 #include <signal.h>
-#ifdef __linux__
+#if defined(__linux__) || defined(__FreeBSD__)
 #include <sys/ucontext.h>
 #endif
 
-//#define DEBUG_SIGNAL
+#define DEBUG_SIGNAL
 
 static void exception_action(CPUArchState *env1)
 {
@@ -58,6 +58,8 @@ void cpu_resume_from_signal(CPUArchState *env1, void *puc)
     struct ucontext *uc = puc;
 #elif defined(__OpenBSD__)
     struct sigcontext *uc = puc;
+#elif defined(__NetBSD__) || defined(__FreeBSD__) || defined(__DragonFly__)
+    ucontext_t *uc = puc;
 #endif
 
 #ifndef CONFIG_TCG_PASS_AREG0
@@ -76,6 +78,8 @@ void cpu_resume_from_signal(CPUArchState *env1, void *puc)
 #endif
 #elif defined(__OpenBSD__)
         sigprocmask(SIG_SETMASK, &uc->sc_mask, NULL);
+#elif defined(__NetBSD__) || defined(__FreeBSD__) || defined(__DragonFly__)
+        sigprocmask(SIG_SETMASK, &uc->uc_sigmask, NULL);
 #endif
     }
     env1->exception_index = -1;

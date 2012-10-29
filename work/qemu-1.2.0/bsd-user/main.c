@@ -828,7 +828,7 @@ void cpu_loop(CPUMIPSState *env)
 			info.si_errno = 0;
 			/* XXX: check env->error_code */
 			info.si_code = TARGET_SEGV_MAPERR;
-			info._sifields._sigfault._addr = env->CP0_BadVAddr;
+			info.si_addr = env->CP0_BadVAddr;
 			queue_signal(env, info.si_signo, &info);
 			break;
 
@@ -863,8 +863,7 @@ void cpu_loop(CPUMIPSState *env)
 				info.si_signo = TARGET_SIGSEGV;
 				info.si_errno = 0;
 				info.si_code = TARGET_SEGV_MAPERR;
-				info._sifields._sigfault._addr =
-				    env->active_tc.PC;
+				info.si_addr = env->active_tc.PC;
 				queue_signal(env, info.si_signo, &info);
 			}
 			break;

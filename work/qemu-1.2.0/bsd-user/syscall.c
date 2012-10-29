@@ -3742,30 +3742,217 @@ do_stat:
 	 break;
 
     case TARGET_FREEBSD_NR_kill:
+	 ret = get_errno(kill(arg1, target_to_host_signal(arg2)));
+	 break;
+
 #ifdef TARGET_FREEBSD_NR_killpg
     case TARGET_FREEBSD_NR_killpg:
+	 ret = get_errno(killpg(arg1, target_to_host_signal(arg2)));
+	 break;
 #endif
+
     case TARGET_FREEBSD_NR_sigaction:
+	 {
+		 struct target_sigaction *old_act, act, oact, *pact;
+
+		 if (arg2) {
+			 if (!lock_user_struct(VERIFY_READ, old_act, arg2, 1))
+				 goto efault;
+			 act._sa_handler = old_act->_sa_handler;
+			 act.sa_flags = old_act->sa_flags;
+			 memcpy(&act.sa_mask, &old_act->sa_mask,
+			     sizeof(target_sigset_t));
+			 unlock_user_struct(old_act, arg2, 0);
+			 pact = &act;
+		 } else {
+			 pact = NULL;
+		 }
+		 ret = get_errno(do_sigaction(arg1, pact, &oact));
+		 if (!is_error(ret) && arg3) {
+			 if (!lock_user_struct(VERIFY_WRITE, old_act, arg3, 0))
+			     goto efault;
+			 old_act->_sa_handler = oact._sa_handler;
+			 old_act->sa_flags = oact.sa_flags;
+			 memcpy(&old_act->sa_mask, &oact.sa_mask,
+			     sizeof(target_sigset_t));
+			 unlock_user_struct(old_act, arg3, 1);
+		 }
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_sigprocmask:
+	 {
+		 sigset_t set, oldset, *set_ptr;
+		 int how;
+
+		 if (arg2) {
+			 switch (arg1) {
+			 case TARGET_SIG_BLOCK:
+				 how = SIG_BLOCK;
+				 break;
+
+			 case TARGET_SIG_UNBLOCK:
+				 how = SIG_UNBLOCK;
+				 break;
+
+			 case TARGET_SIG_SETMASK:
+				 how = SIG_SETMASK;
+				 break;
+
+			 default:
+				 ret = -TARGET_EINVAL;
+				 goto fail;
+			 }
+			 if (!(p = lock_user(VERIFY_READ, arg2,
+				     sizeof(target_sigset_t), 1)))
+				 goto efault;
+			 target_to_host_sigset(&set, p);
+			 unlock_user(p, arg2, 0);
+			 set_ptr = &set;
+		 } else {
+			 how = 0;
+			 set_ptr = NULL;
+		 }
+		 ret = get_errno(sigprocmask(how, set_ptr, &oldset));
+		 if (!is_error(ret) && arg3) {
+			 if (!(p = lock_user(VERIFY_WRITE, arg3,
+				     sizeof(target_sigset_t), 0)))
+				 goto efault;
+			 host_to_target_sigset(p, &oldset);
+			 unlock_user(p, arg3, sizeof(target_sigset_t));
+		 }
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_sigpending:
+	 {
+		 sigset_t set;
+
+		 ret = get_errno(sigpending(&set));
+		 if (!is_error(ret)) {
+			 if (!(p = lock_user(VERIFY_WRITE, arg1,
+				     sizeof(target_sigset_t), 0)))
+				 goto efault;
+			 host_to_target_sigset(p, &set);
+			 unlock_user(p, arg1, sizeof(target_sigset_t));
+		 }
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_sigsuspend:
+	 {
+		 sigset_t set;
+
+		 if (!(p = lock_user(VERIFY_READ, arg1,
+			     sizeof(target_sigset_t), 1)))
+			 goto efault;
+		 target_to_host_sigset(&set, p);
+		 unlock_user(p, arg1, 0);
+		 ret = get_errno(sigsuspend(&set));
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_sigreturn:
+	 /* ret = do_sigreturn(cpu_env); */
+	 ret = unimplemented(num);
+	 break;
+
 #ifdef TARGET_FREEBSD_NR_sigvec
     case TARGET_FREEBSD_NR_sigvec:
+	 ret = unimplemented(num);
+	 break;
 #endif
 #ifdef TARGET_FREEBSD_NR_sigblock
     case TARGET_FREEBSD_NR_sigblock:
+	 ret = unimplemented(num);
+	 break;
 #endif
 #ifdef TARGET_FREEBSD_NR_sigsetmask
     case TARGET_FREEBSD_NR_sigsetmask:
+	 ret = unimplemented(num);
+	 break;
 #endif
 #ifdef TARGET_FREEBSD_NR_sigstack
     case TARGET_FREEBSD_NR_sigstack:
+	 ret = unimplemented(num);
+	 break;
 #endif
+
     case TARGET_FREEBSD_NR_sigwait:
+	 {
+		 sigset_t set;
+		 int sig;
+
+		 if (!(p = lock_user(VERIFY_READ, arg1,
+			     sizeof(target_sigset_t), 1)))
+			 goto efault;
+		 target_to_host_sigset(&set, p);
+		 unlock_user(p, arg1, 0);
+		 ret = get_errno(sigwait(&set, &sig));
+		 if (!is_error(ret) && arg2) {
+			 /* XXX */
+		 }
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_sigtimedwait:
+	 {
+		 sigset_t set;
+		 struct timespec uts, *puts;
+		 siginfo_t uinfo;
+
+		 if (!(p = lock_user(VERIFY_READ, arg1,
+			     sizeof(target_sigset_t), 1)))
+			 goto efault;
+		 target_to_host_sigset(&set, p);
+		 unlock_user(p, arg1, 0);
+		 if (arg3) {
+			 puts = &uts;
+			 target_to_host_timespec(puts, arg3);
+		 } else {
+			 puts = NULL;
+		 }
+		 ret = get_errno(sigtimedwait(&set, &uinfo, puts));
+		 if (!is_error(ret) && arg2) {
+			 if (!(p = lock_user(VERIFY_WRITE, arg2,
+				     sizeof(target_siginfo_t), 0)))
+				 goto efault;
+			 host_to_target_siginfo(p, &uinfo);
+			 unlock_user(p, arg2, sizeof(target_siginfo_t));
+		 }
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_sigwaitinfo:
+	 {
+		 sigset_t set;
+		 siginfo_t uinfo;
+
+		 if (!(p = lock_user(VERIFY_READ, arg1,
+			     sizeof(target_sigset_t), 1)))
+			 goto efault;
+		 target_to_host_sigset(&set, p);
+		 unlock_user(p, arg1, 0);
+		 ret = get_errno(sigwaitinfo(&set, &uinfo));
+		 if (!is_error(ret) && arg2) {
+			 if (!(p = lock_user(VERIFY_WRITE, arg2,
+				     sizeof(target_siginfo_t), 0)))
+				 goto efault;
+			 host_to_target_siginfo(p, &uinfo);
+			 unlock_user(p, arg2, sizeof(target_siginfo_t));
+		 }
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_sigqueue:
+	 {
+		 union sigval value;
+
+		 value.sival_ptr = (void *)(uintptr_t)arg3;
+		 ret = get_errno(sigqueue(arg1, target_to_host_signal(arg2),
+			 value));
+	 }
+	 break;
 
 #ifdef TARGET_FREEBSD_NR_aio_read
     case TARGET_FREEBSD_NR_aio_read:
