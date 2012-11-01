@@ -111,7 +111,7 @@
 					   stack */
 
 #define TARGET_NSIG		128
-#define	TARGET_NSIG_BPW		TARGET_ABI_BITS
+#define	TARGET_NSIG_BPW		(sizeof(uint32_t) * 8)
 #define	TARGET_NSIG_WORDS	(TARGET_NSIG / TARGET_NSIG_BPW)
 
 /*
@@ -424,7 +424,7 @@ typedef struct target_sigaltstack {
 } target_stack_t;
 
 typedef struct {
-	abi_ulong sig[TARGET_NSIG_WORDS];
+	uint32_t __bits[TARGET_NSIG_WORDS];
 } target_sigset_t;
 
 struct target_sigaction {
@@ -573,7 +573,7 @@ tswap_sigset(target_sigset_t *d, const target_sigset_t *s)
 	int i;
 
 	for(i = 0;i < TARGET_NSIG_WORDS; i++)
-		d->sig[i] = tswapal(s->sig[i]);
+		d->__bits[i] = tswapal(s->__bits[i]);
 }
 
 #else

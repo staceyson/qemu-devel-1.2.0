@@ -143,8 +143,8 @@ static inline void
 target_sigaddset(target_sigset_t *set, int signum)
 {
 	signum--;
-	abi_ulong mask = (abi_ulong)1 << (signum % TARGET_NSIG_BPW);
-	set->sig[signum / TARGET_NSIG_BPW] |= mask;
+	uint32_t mask = (uint32_t)1 << (signum % TARGET_NSIG_BPW);
+	set->__bits[signum / TARGET_NSIG_BPW] |= mask;
 }
 
 static inline int
@@ -152,7 +152,7 @@ target_sigismember(const target_sigset_t *set, int signum)
 {
 	signum--;
 	abi_ulong mask = (abi_ulong)1 << (signum % TARGET_NSIG_BPW);
-	return ((set->sig[signum / TARGET_NSIG_BPW] & mask) != 0);
+	return ((set->__bits[signum / TARGET_NSIG_BPW] & mask) != 0);
 }
 
 static void
@@ -176,7 +176,7 @@ host_to_target_sigset(target_sigset_t *d, const sigset_t *s)
 
 	host_to_target_sigset_internal(&d1, s);
 	for(i = 0;i < TARGET_NSIG_WORDS; i++)
-		d->sig[i] = tswapal(d1.sig[i]);
+		d->__bits[i] = tswap32(d1.__bits[i]);
 }
 
 static void
@@ -199,7 +199,7 @@ target_to_host_sigset(sigset_t *d, const target_sigset_t *s)
 	int i;
 
 	for(i = 0; i < TARGET_NSIG_WORDS; i++)
-		s1.sig[i] = tswapal(s->sig[i]);
+		s1.__bits[i] = tswap32(s->__bits[i]);
 	target_to_host_sigset_internal(d, &s1);
 }
 
@@ -569,13 +569,13 @@ do_sigaction(int sig, const struct target_sigaction *act,
 #endif
 	if (oact) {
 		oact->_sa_handler = tswapal(k->_sa_handler);
-		oact->sa_flags = tswapal(k->sa_flags);
+		oact->sa_flags = tswap32(k->sa_flags);
 		oact->sa_mask = k->sa_mask;
 	}
 	if (act) {
 		/* XXX: this is most likely not threadsafe. */
 		k->_sa_handler = tswapal(act->_sa_handler);
-		k->sa_flags = tswapal(act->sa_flags);
+		k->sa_flags = tswap32(act->sa_flags);
 		k->sa_mask = act->sa_mask;
 
 		/* Update the host signal state. */
@@ -724,7 +724,7 @@ static void setup_frame(int sig, struct target_sigaction *ka,
 		goto give_sigsegv;
 
 	for(i = 0; i < TARGET_NSIG_WORDS; i++) {
-		if (__put_user(set->sig[i], &frame->sf_uc.uc_sigmask.sig[i]))
+		if (__put_user(set->__bits[i], &frame->sf_uc.uc_sigmask.__bits[i]))
 			goto give_sigsegv;
 	}
 
@@ -785,7 +785,7 @@ do_sigreturn(CPUMIPSState *regs, abi_ulong uc_addr)
 		goto badframe;
 
 	for(i = 0; i < TARGET_NSIG_WORDS; i++) {
-		if (__get_user(target_set.sig[i], &ucontext->uc_sigmask.sig[i]))
+		if (__get_user(target_set.__bits[i], &ucontext->uc_sigmask.__bits[i]))
 			goto badframe;
 	}
 
@@ -976,7 +976,7 @@ static void setup_frame(int sig, struct target_sigaction *ka,
 		goto give_sigsegv;
 
 	for(i = 0; i < TARGET_NSIG_WORDS; i++) {
-		if (__put_user(set->sig[i], &frame->sf_uc.uc_sigmask.sig[i]))
+		if (__put_user(set->__bits[i], &frame->sf_uc.uc_sigmask.__bits[i]))
 			goto give_sigsegv;
 	}
 
@@ -1028,7 +1028,7 @@ long do_sigreturn(CPUSPARCState *regs, abi_ulong uc_addr)
 		goto badframe;
 
 	for(i = 0; i < TARGET_NSIG_WORDS; i++) {
-		if (__get_user(target_set.sig[i], &ucontext->uc_sigmask.sig[i]))
+		if (__get_user(target_set.__bits[i], &ucontext->uc_sigmask.__bits[i]))
 			goto badframe;
 	}
 
