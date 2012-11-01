@@ -179,13 +179,65 @@ static abi_long do_freebsd_sysarch(CPUX86State *env, int op, abi_ulong parms)
 #endif
 
 #ifdef TARGET_SPARC
+struct target_sparc_sigtramp_install_args {
+	abi_ulong	sia_new;	/* address of sigtramp code */
+	abi_ulong	sia_old;	/* user address to store old sigtramp addr */
+};
+
+abi_ulong sparc_user_sigtramp = 0;
+
 static abi_long do_freebsd_sysarch(void *env, int op, abi_ulong parms)
 {
-    /* XXX handle
-     * TARGET_FREEBSD_SPARC_UTRAP_INSTALL,
-     * TARGET_FREEBSD_SPARC_SIGTRAMP_INSTALL
-     */
-    return -TARGET_EINVAL;
+    int ret = 0;
+    abi_ulong val, old;
+    /*
+    struct target_sparc_sigtramp_install_args *target_sigtramp_args;
+    */
+
+
+    switch(op) {
+    case TARGET_SPARC_SIGTRAMP_INSTALL:
+	    {
+
+#if 0
+		    /* Sparc userland is giving us a new sigtramp code ptr. */
+		    if (!(target_sigtramp_args = lock_user(VERIFY_WRITE, parms,
+			sizeof(*target_sigtramp_args), 1))) {
+			    ret = -TARGET_EFAULT;
+		    } else {
+			if (target_sigtramp_args->sia_old) {
+				put_user_ual(sparc_user_sigtramp,
+				    target_sigtramp_args->sia_old);
+			}
+			sparc_user_sigtramp = target_sigtramp_args->sia_new;
+			unlock_user(target_sigtramp_args, parms, 0);
+
+		    }
+#endif
+		    val = sparc_user_sigtramp;
+		    if (get_user(sparc_user_sigtramp, parms, abi_ulong)) {
+			    return (-TARGET_EFAULT);
+		    }
+		    parms += sizeof(abi_ulong);
+		    if (get_user(old, parms, abi_ulong)) {
+			    return (-TARGET_EFAULT);
+		    }
+		    if (old) {
+			    if (put_user(val, old, abi_ulong)) {
+				    return (-TARGET_EFAULT);
+			    }
+		    }
+	    }
+	    break;
+
+    case TARGET_SPARC_UTRAP_INSTALL:
+	    /* XXX not currently handled */
+    default:
+	    ret = -TARGET_EINVAL;
+	    break;
+    }
+
+    return (ret);
 }
 #endif
 

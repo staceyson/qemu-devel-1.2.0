@@ -692,7 +692,7 @@ static inline int
 install_sigtramp(abi_ulong offset, unsigned sigf_uc, unsigned syscall)
 {
 	int i;
-	uint32_t sigtrap_code[] = {
+	uint32_t sigtramp_code[] = {
 		0x67A40000 + sigf_uc,   /* daddu   $a0, $sp, (sigf_uc) */
 		0x24020000 + syscall,   /* li      $v0, (syscall) */
 		0x0000000C,             /* syscall */
@@ -700,9 +700,9 @@ install_sigtramp(abi_ulong offset, unsigned sigf_uc, unsigned syscall)
 	};
 
 	for(i = 0; i < 4; i++)
-		tswap32s(&sigtrap_code[i]);
+		tswap32s(&sigtramp_code[i]);
 
-	return (memcpy_to_target(offset, sigtrap_code, TARGET_SZSIGCODE));
+	return (memcpy_to_target(offset, sigtramp_code, TARGET_SZSIGCODE));
 }
 #endif
 

@@ -192,6 +192,9 @@ struct target_pollfd {
 #define	TARGET_O_ASYNC		0x00000040
 #define	TARGET_O_DIRECT		0x00010000
 
+#define	TARGET_SPARC_UTRAP_INSTALL	1
+#define	TARGET_SPARC_SIGTRAMP_INSTALL	2
+
 #include "socket.h"
 #include "errno_defs.h"
 
@@ -426,7 +429,7 @@ typedef struct {
 
 struct target_sigaction {
 	abi_ulong	_sa_handler;
-	abi_ulong	sa_flags;
+	int32_t		sa_flags;
 	target_sigset_t	sa_mask;
 };
 
@@ -474,6 +477,8 @@ typedef struct target_siginfo {
 	} _reason;
 } target_siginfo_t;
 
+#if defined(TARGET_MIPS)
+
 struct target_sigcontext {
 	target_sigset_t	sc_mask;        /* signal mask to retstore */
 	int32_t		sc_onstack;     /* sigstack state to restore */
@@ -499,12 +504,12 @@ typedef struct target_mcontext {
 } target_mcontext_t;
 
 typedef struct target_ucontext {
-	target_ulong		uc_flags;
+	target_sigset_t		uc_sigmask;
+	target_mcontext_t	uc_mcontext;
 	target_ulong		uc_link;
 	target_stack_t		uc_stack;
-	target_mcontext_t	uc_mcontext;
-	target_ulong		uc_filer[80];
-	target_sigset_t		uc_sigmask;
+	int32_t			uc_flags;
+	int32_t			__space__[8];
 } target_ucontext_t;
 
 struct target_sigframe {
@@ -516,6 +521,50 @@ struct target_sigframe {
 	target_siginfo_t	sf_si;	/* = *sf_siginfo (SA_SIGINFO case)*/
 	uint32_t	__spare__[2];
 };
+
+#elif defined(TARGET_SPARC64)
+
+struct target_mcontext {
+	uint64_t mc_global[8];
+	uint64_t mc_out[8];
+	uint64_t mc_local[8];
+	uint64_t mc_in[8];
+	uint32_t mc_fp[64];
+} __aligned(64);
+
+typedef struct target_mcontext target_mcontext_t;
+
+typedef struct target_ucontext {
+	target_sigset_t		uc_sigmask;
+	target_mcontext_t	uc_mcontext;
+	target_ulong		uc_link;
+	target_stack_t		uc_stack;
+	int32_t			uc_flags;
+	int32_t			__space__[8];
+} target_ucontext_t;
+
+struct target_sigframe {
+	target_ucontext_t	sf_uc;
+	target_siginfo_t	sf_si;
+};
+
+#else
+
+typedef target_ulong target_mcontext_t; /* dummy */
+
+#endif
+
+/*  XXX where did this come from?
+typedef struct target_ucontext {
+	target_ulong		uc_flags;
+	target_ulong		uc_link;
+	target_stack_t		uc_stack;
+	target_mcontext_t	uc_mcontext;
+	target_ulong		uc_filer[80];
+	target_sigset_t		uc_sigmask;
+} target_ucontext_t;
+*/
+
 
 #ifdef BSWAP_NEEDED
 static inline void

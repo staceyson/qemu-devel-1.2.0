@@ -11,7 +11,7 @@ struct target_ps_strings {
 	uint32_t ps_nargvstr;
 	abi_ulong ps_envstr;
 	uint32_t ps_nenvstr;
-};                                      
+};
 
 #define TARGET_SPACE_USRSPACE   4096
 #define TARGET_ARG_MAX          262144
@@ -22,7 +22,7 @@ struct target_ps_strings {
 
 #else
 
-#define TARGET_USRSTACK			0			
+#define TARGET_USRSTACK			0
 #endif
 
 #endif /* _TARGET_VMPARAM_H_ */
