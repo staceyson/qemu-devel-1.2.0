@@ -404,26 +404,21 @@ queue_signal(CPUArchState *env, int sig, target_siginfo_t *info)
 		force_sig(sig);
 	} else {
 		pq = &k->first;
-		if (sig < TARGET_SIGRTMIN) {
-			/*
-			 * If non real time signal then queue exactly one
-			 * signal.
-			 */
-			if (!k->pending)
-				 q = &k->info;
-			else
-				return (0);
+
+		/*
+		 * FreeBSD signals are always queued.
+		 * Linux only queues real time signals.
+		 * XXX this code is not thread safe.
+		 */
+		if (!k->pending) {
+			/* first signal */
+			q = &k->info;
 		} else {
-			if (!k->pending) {
-				/* first signal */
-				q = &k->info;
-			} else {
-				q = alloc_sigqueue(env);
-				if (!q)
-					return (-EAGAIN);
-				while (*pq != NULL)
-					pq = &(*pq)->next;
-			}
+			q = alloc_sigqueue(env);
+			if (!q)
+				return (-EAGAIN);
+			while (*pq != NULL)
+				pq = &(*pq)->next;
 		}
 		*pq = q;
 		q->info = *info;
