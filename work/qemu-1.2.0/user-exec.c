@@ -38,7 +38,7 @@
 #include <sys/ucontext.h>
 #endif
 
-#define DEBUG_SIGNAL
+//#define DEBUG_SIGNAL
 
 static void exception_action(CPUArchState *env1)
 {
@@ -103,7 +103,7 @@ static inline int handle_cpu_signal(uintptr_t pc, unsigned long address,
     }
 #endif
 #if defined(DEBUG_SIGNAL)
-    qemu_printf("qemu: SIGSEGV pc=0x%08lx address=%08lx w=%d oldset=0x%08lx\n",
+    qemu_printf("qemu: SIGSEGV pc=0x%08lx address=0x%08lx w=%d oldset=0x%08lx\n",
                 pc, address, is_write, *(unsigned long *)old_set);
 #endif
     /* XXX: locking issue */

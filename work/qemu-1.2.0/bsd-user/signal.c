@@ -31,7 +31,7 @@
 #include "qemu.h"
 #include "target_signal.h"
 
-// #define DEBUG_SIGNAL
+//#define DEBUG_SIGNAL
 
 #ifndef _NSIG
 #define _NSIG	128
@@ -441,7 +441,7 @@ host_signal_handler(int host_signum, siginfo_t *info, void *puc)
 	 * we forward to it some signals.
 	 */
 	if ((host_signum == SIGSEGV || host_signum == SIGBUS) &&
-	    info->si_code > 0) {
+	    info->si_code < 0x10000) {
 		if (cpu_signal_handler(host_signum, info, puc))
 			return;
 	}
