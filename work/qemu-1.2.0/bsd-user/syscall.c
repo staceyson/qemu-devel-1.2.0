@@ -3544,6 +3544,30 @@ do_stat:
 	 }
 	 break;
 
+#ifdef TARGET_FREEBSD_NR_pdwait4
+    case TARGET_FREEBSD_NR_pdwait4:
+	 {
+		 int status;
+		 abi_long status_ptr = arg2;
+		 struct rusage rusage, *rusage_ptr;
+		 abi_long target_rusage = arg4;
+
+		 if (target_rusage)
+			 rusage_ptr = &rusage;
+		 else
+			 rusage_ptr = NULL;
+		 ret = get_errno(wait4(arg1, &status, arg3, rusage_ptr));
+		 if (!is_error(ret)) {
+			 status = host_to_target_waitstatus(status);
+			 if (put_user_s32(status, status_ptr))
+				 goto efault;
+			 if (target_rusage)
+				 host_to_target_rusage(target_rusage, &rusage);
+		 }
+	 }
+	 break;
+#endif /* TARGET_FREEBSD_NR_pdwait4 */
+
     case TARGET_FREEBSD_NR_accept:
 	 ret = do_accept(arg1, arg2, arg3);
 	 break;
@@ -3803,6 +3827,20 @@ do_stat:
 	 break;
 #endif
 
+    case TARGET_FREEBSD_NR_pdkill:
+	 ret = get_errno(pdkill(arg1, target_to_host_signal(arg2)));
+	 break;
+
+    case TARGET_FREEBSD_NR_pdgetpid:
+	 {
+		 pid_t pid;
+
+		 ret = get_errno(pdgetpid(arg1, &pid));
+		 if (put_user_u32(pid, arg2))
+			 goto efault;
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_sigaction:
 	 {
 		 struct target_sigaction *old_act, act, oact, *pact;
@@ -4014,27 +4052,43 @@ do_stat:
 
 #ifdef TARGET_FREEBSD_NR_aio_read
     case TARGET_FREEBSD_NR_aio_read:
+	 ret = unimplemented(num);
+	 break;
 #endif
 #ifdef TARGET_FREEBSD_NR_aio_write
     case TARGET_FREEBSD_NR_aio_write:
+	 ret = unimplemented(num);
+	 break;
 #endif
 #ifdef TARGET_FREEBSD_NR_aio_return
     case TARGET_FREEBSD_NR_aio_return:
+	 ret = unimplemented(num);
+	 break;
 #endif
 #ifdef TARGET_FREEBSD_NR_aio_suspend
     case TARGET_FREEBSD_NR_aio_suspend:
+	 ret = unimplemented(num);
+	 break;
 #endif
 #ifdef TARGET_FREEBSD_NR_aio_cancel
     case TARGET_FREEBSD_NR_aio_cancel:
+	 ret = unimplemented(num);
+	 break;
 #endif
 #ifdef TARGET_FREEBSD_NR_aio_error
     case TARGET_FREEBSD_NR_aio_error:
+	 ret = unimplemented(num);
+	 break;
 #endif
 #ifdef TARGET_FREEBSD_NR_aio_waitcomplete
     case TARGET_FREEBSD_NR_aio_waitcomplete:
+	 ret = unimplemented(num);
+	 break;
 #endif
 #ifdef TARGET_FREEBSD_NR_lio_listio
     case TARGET_FREEBSD_NR_lio_listio:
+	 ret = unimplemented(num);
+	 break;
 #endif
 
     case TARGET_FREEBSD_NR_yield:
@@ -4053,9 +4107,6 @@ do_stat:
 
     case TARGET_FREEBSD_NR_swapon:
     case TARGET_FREEBSD_NR_swapoff:
-
-    case TARGET_FREEBSD_NR_pdkill:
-    case TARGET_FREEBSD_NR_pdgetpid:
 
     case TARGET_FREEBSD_NR_thr_create:
     case TARGET_FREEBSD_NR_thr_exit:
