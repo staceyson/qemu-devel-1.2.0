@@ -4091,6 +4091,51 @@ do_stat:
 	 break;
 #endif
 
+#if 0 /* XXX not supported in libc yet, it seems (10.0 addition). */
+    case TARGET_FREEBSD_NR_posix_fadvise:
+	 {
+		 off_t offset = arg2, len = arg3;
+		 int advice = arg4;
+
+#if TARGET_ABI_BITS == 32
+		 if (regpairs_aligned(cpu_env)) {
+			 offset = target_offset64(arg3, arg4);
+			 len = target_offset64(arg5, arg6);
+			 advice = arg7;
+		 } else {
+			 offset = target_offset64(arg2, arg3);
+			 len = target_offset64(arg4, arg5);
+			 advice = arg6;
+		 }
+#endif
+		 ret = get_errno(posix_fadvise(arg1, offset, len, advice));
+	 }
+	 break;
+#endif
+
+    case TARGET_FREEBSD_NR_posix_fallocate:
+	 {
+		 off_t offset = arg2, len = arg3;
+
+#if TARGET_ABI_BITS == 32
+		 if (regpairs_aligned(cpu_env)) {
+			 offset = target_offset64(arg3, arg4);
+			 len = target_offset64(arg5, arg6);
+		 } else {
+			 offset = target_offset64(arg2, arg3);
+			 len = target_offset64(arg4, arg5);
+		 }
+#endif
+		 ret = get_errno(posix_fallocate(arg1, offset, len));
+	 }
+	 break;
+
+#ifdef TARGET_FREEBSD_posix_openpt
+    case TARGET_FREEBSD_posix_openpt:
+	 ret = get_errno(posix_openpt(arg1));
+	 break;
+#endif
+
     case TARGET_FREEBSD_NR_yield:
     case TARGET_FREEBSD_NR_sched_setparam:
     case TARGET_FREEBSD_NR_sched_getparam:
@@ -4130,9 +4175,6 @@ do_stat:
 
     case TARGET_FREEBSD_NR__umtx_lock:
     case TARGET_FREEBSD_NR__umtx_unlock:
-
-    case TARGET_FREEBSD_NR_posix_fadvise:
-    case TARGET_FREEBSD_NR_posix_fallocate:
 
     case TARGET_FREEBSD_NR_rctl_get_racct:
     case TARGET_FREEBSD_NR_rctl_get_rules:
