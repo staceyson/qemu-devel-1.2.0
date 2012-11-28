@@ -1099,6 +1099,7 @@ signal_init(void)
 
 	sigfillset(&act.sa_mask);
 	act.sa_sigaction = host_signal_handler;
+	act.sa_flags = SA_SIGINFO;
 
 	for (i = 1; i <= TARGET_NSIG; i++) {
 		host_sig = target_to_host_signal(i);
