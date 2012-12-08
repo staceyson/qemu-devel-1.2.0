@@ -43,6 +43,11 @@
 #ifdef __FreeBSD__
 #include <sys/regression.h>
 #include <sys/procdesc.h>
+#include <sys/ucontext.h>
+#include <sys/thr.h>
+#include <sys/rtprio.h>
+#include <sys/umtx.h>
+#include <pthread.h>
 #endif
 #include <sys/un.h>
 #include <sys/ipc.h>
@@ -251,7 +256,24 @@ static abi_long do_freebsd_sysarch(void *env, int op, abi_ulong parms)
 #ifdef TARGET_MIPS
 static abi_long do_freebsd_sysarch(void *env, int op, abi_ulong parms)
 {
-    return -TARGET_EINVAL;
+	int ret = 0;
+	CPUMIPSState *mips_env = (CPUMIPSState *)env;
+
+	switch(op) {
+	case TARGET_MIPS_SET_TLS:
+		if (get_user(mips_env->tls_value, parms, abi_ulong))
+			ret = -TARGET_EFAULT;
+		break;
+	case TARGET_MIPS_GET_TLS:
+		if (put_user(mips_env->tls_value, parms, abi_ulong))
+			ret = -TARGET_EFAULT;
+		break;
+	default:
+		ret = -TARGET_EINVAL;
+		break;
+	}
+
+	return (ret);
 }
 #endif
 
@@ -2118,6 +2140,349 @@ do_fork(CPUArchState *env, int num, int flags, int *fdp)
 
 	return (ret);
 }
+
+#if defined(CONFIG_USE_NPTL)
+
+#define NEW_STACK_SIZE	(0x40000)
+
+static pthread_mutex_t new_thread_lock = PTHREAD_MUTEX_INITIALIZER;
+typedef struct {
+	CPUArchState *env;
+	long tid;
+	pthread_mutex_t mutex;
+	pthread_cond_t cond;
+	pthread_t thread;
+	sigset_t sigmask;
+	struct target_thr_param param;
+} new_thread_info_t;
+
+static void *
+new_thread_start(void *arg)
+{
+	new_thread_info_t *info = arg;
+	CPUArchState *env;
+	TaskState *ts;
+	long tid;
+
+	env = info->env;
+	thread_env = env;
+	ts = (TaskState *)thread_env->opaque;
+	(void)thr_self(&tid);
+	info->tid = tid;
+	task_settid(ts);
+
+	/* copy out the TID info */
+	if (info->param.child_tid)
+		put_user(tid, info->param.child_tid, abi_long);
+	if (info->param.parent_tid)
+		put_user(tid, info->param.parent_tid, abi_long);
+
+#ifdef TARGET_MIPS64
+	CPUMIPSState *regs = env;
+	regs->active_tc.gpr[25] = regs->active_tc.PC = info->param.start_func;
+	regs->active_tc.gpr[ 4] = info->param.arg;
+	regs->active_tc.gpr[29] = regs->active_tc.gpr[30] = info->param.stack_base;
+#endif
+	/* Eenable signals */
+	sigprocmask(SIG_SETMASK, &info->sigmask, NULL);
+	/* Signal to the parent that we're ready. */
+	pthread_mutex_lock(&info->mutex);
+	pthread_cond_broadcast(&info->cond);
+	pthread_mutex_unlock(&info->mutex);
+	/* Wait until the parent has finished initializing the TLS state. */
+	pthread_mutex_lock(&new_thread_lock);
+	pthread_mutex_unlock(&new_thread_lock);
+
+	cpu_loop(env);
+	/* never exits */
+
+	return (NULL);
+}
+
+static void
+rtp_to_schedparam(const struct rtprio *rtp, int *policy, struct sched_param *param)
+{
+
+	switch(rtp->type) {
+	case RTP_PRIO_REALTIME:
+		*policy = SCHED_RR;
+		param->sched_priority = RTP_PRIO_MAX - rtp->prio;
+		break;
+
+	case RTP_PRIO_FIFO:
+		*policy = SCHED_FIFO;
+		param->sched_priority = RTP_PRIO_MAX - rtp->prio;
+		break;
+
+	default:
+		*policy = SCHED_OTHER;
+		param->sched_priority = 0;
+		break;
+	}
+}
+
+static int
+do_thr_create(CPUArchState *env, ucontext_t *ctx, long *id, int flags)
+{
+
+	return (unimplemented(TARGET_FREEBSD_NR_thr_create));
+}
+
+static int
+do_thr_new(CPUArchState *env, abi_ulong target_param_addr, int32_t param_size)
+{
+	new_thread_info_t info;
+	pthread_attr_t attr;
+	TaskState *ts;
+	CPUArchState *new_env;
+	struct target_thr_param *target_param;
+	abi_ulong target_rtp_addr;
+	struct target_rtprio *target_rtp;
+	struct rtprio *rtp_ptr, rtp;
+	TaskState *parent_ts = (TaskState *)env->opaque;
+	sigset_t sigmask;
+	struct sched_param sched_param;
+	int sched_policy;
+	int ret = 0;
+
+	memset(&info, 0, sizeof(info));
+
+	if (!lock_user_struct(VERIFY_READ, target_param, target_param_addr, 1))
+		return (-TARGET_EFAULT);
+	info.param.start_func = tswapal(target_param->start_func);
+	info.param.arg = tswapal(target_param->arg);
+	info.param.stack_base = tswapal(target_param->stack_base);
+	info.param.stack_size = tswapal(target_param->stack_size);
+	info.param.tls_base = tswapal(target_param->tls_base);
+	info.param.tls_size = tswapal(target_param->tls_size);
+	info.param.child_tid = tswapal(target_param->child_tid);
+	info.param.parent_tid = tswapal(target_param->parent_tid);
+	target_rtp_addr = info.param.rtp = tswapal(target_param->rtp);
+	unlock_user(target_param, target_param_addr, 0);
+
+	if (target_rtp_addr) {
+		if (!lock_user_struct(VERIFY_READ, target_rtp, target_rtp_addr,
+			1))
+			return (-TARGET_EFAULT);
+		rtp.type = tswap16(target_rtp->type);
+		rtp.prio = tswap16(target_rtp->prio);
+		unlock_user(target_rtp, target_rtp_addr, 0);
+		rtp_ptr = &rtp;
+	} else {
+		rtp_ptr = NULL;
+	}
+
+	/* Create a new CPU instance. */
+	ts = g_malloc0(sizeof(TaskState));
+	init_task_state(ts);
+	new_env = cpu_copy(env);
+#if defined(TARGET_I386) || defined(TARGET_SPARC) || defined(TARGET_PPC)
+	cpu_reset(ENV_GET_CPU(new_env));
+#endif
+
+	/* init regs that differ from the parent thread. */
+	cpu_clone_regs(new_env, info.param.stack_base);
+	new_env->opaque = ts;
+	ts->bprm = parent_ts->bprm;
+	ts->info = parent_ts->info;
+
+#if defined(TARGET_MIPS)
+	env->tls_value = info.param.tls_base;
+	/* cpu_set_tls(new_env, info.param.tls_base); */
+#endif
+
+	/* Grab a mutex so that thread setup appears atomic. */
+	pthread_mutex_lock(&new_thread_lock);
+
+	pthread_mutex_init(&info.mutex, NULL);
+	pthread_mutex_lock(&info.mutex);
+	pthread_cond_init(&info.cond, NULL);
+	info.env = new_env;
+
+	/* XXX return value needs to be checked... */
+	pthread_attr_init(&attr);
+	pthread_attr_setstacksize(&attr, NEW_STACK_SIZE);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	if (rtp_ptr) {
+		rtp_to_schedparam(&rtp, &sched_policy, &sched_param);
+		pthread_attr_setschedpolicy(&attr, sched_policy);
+		pthread_attr_setschedparam(&attr, &sched_param);
+	}
+
+	/*
+	 * It is not safe to deliver signals until the child has finished
+	 * initializing, so temporarily block all signals.
+	 */
+	sigfillset(&sigmask);
+	sigprocmask(SIG_BLOCK, &sigmask, &info.sigmask);
+
+	/* XXX return value needs to be checked... */
+	ret = pthread_create(&info.thread, &attr, new_thread_start, &info);
+	/* XXX Free new CPU state if thread creation fails. */
+
+	sigprocmask(SIG_SETMASK, &info.sigmask, NULL);
+	pthread_attr_destroy(&attr);
+	if (0 == ret) {
+		/* Wait for the child to initialize. */
+		pthread_cond_wait(&info.cond, &info.mutex);
+	} else {
+		/* pthread_create failed. */
+	}
+
+	pthread_mutex_unlock(&info.mutex);
+	pthread_cond_destroy(&info.cond);
+	pthread_mutex_destroy(&info.mutex);
+	pthread_mutex_unlock(&new_thread_lock);
+
+	return (ret);
+}
+
+static int
+do_thr_self(long *id)
+{
+
+	return (get_errno(thr_self(id)));
+}
+
+static void
+do_thr_exit(CPUArchState *cpu_env)
+{
+
+	if (first_cpu->next_cpu) {
+		TaskState *ts;
+		CPUArchState **lastp, *p;
+
+		/*
+		 * *XXX This probably breaks if a signal arrives.
+		 * We should disable signals.
+		 */
+		cpu_list_lock();
+		lastp = &first_cpu;
+		p = first_cpu;
+		while (p && p != (CPUArchState *)cpu_env) {
+			lastp = &p->next_cpu;
+			p = p->next_cpu;
+		}
+		/*
+		 * if we didn't find the CPU for this thread then something
+		 * is horribly wrong.
+		 */
+		if (!p)
+			abort();
+		/* Remove the CPU from the list. */
+		*lastp = p->next_cpu;
+		cpu_list_unlock();
+		ts = ((CPUArchState *)cpu_env)->opaque;
+
+#if 0
+		if (ts->child_tidptr) {
+			/* Signal target userland that it can free the stack. */
+			put_user_u32(1, ts->child_tidptr);
+			_umtx_op(g2h(ts->child_tidptr), UMTX_OP_WAKE, INT_MAX,
+			    NULL, NULL);
+		}
+#endif
+		thread_env = NULL;
+#if 0	/* XXX we may have a memory leak here */
+		object_delete(OBJECT(ENV_GET_CPU(cpu_env)));
+#endif
+		g_free(ts);
+		pthread_exit(NULL);
+	}
+}
+
+static int
+do_thr_kill(long id, int sig)
+{
+
+	return (get_errno(thr_kill(id, sig)));
+}
+
+static int
+do_thr_kill2(pid_t pid, long id, int sig)
+{
+
+	return (get_errno(thr_kill2(pid, id, sig)));
+}
+
+static int
+do_thr_suspend(const struct timespec *timeout)
+{
+
+	return (get_errno(thr_suspend(timeout)));
+}
+
+static int
+do_thr_wake(long tid)
+{
+
+	return (get_errno(thr_wake(tid)));
+}
+
+static int
+do_thr_set_name(long tid, char *name)
+{
+
+	 return (get_errno(thr_set_name(tid, name)));
+}
+
+
+#else /* ! CONFIG_USE_NPTL */
+
+static int
+do_thr_create(CPUArchState *env, ucontext_t *ctx, long *id, int flags)
+{
+	return (unimplemented(TARGET_FREEBSD_NR_thr_create));
+}
+
+static int
+do_thr_new(CPUArchState *env, abi_ulong target_param_addr, int32_t param_size)
+{
+	return (unimplemented(TARGET_FREEBSD_NR_thr_new));
+}
+
+static int
+do_thr_self(long *tid)
+{
+	return (unimplemented(TARGET_FREEBSD_NR_thr_self));
+}
+
+static void
+do_thr_exit(CPUArchState *cpu_env)
+{
+}
+
+static int
+do_thr_kill(long tid, int sig)
+{
+	return (unimplemented(TARGET_FREEBSD_NR_thr_kill2));
+}
+
+static int
+do_thr_kill2(pid_t pid, long tid, int sig)
+{
+	return (unimplemented(TARGET_FREEBSD_NR_thr_kill2));
+}
+
+static int
+do_thr_suspend(const struct timespec *timeout)
+{
+	return (unimplemented(TARGET_FREEBSD_NR_thr_suspend));
+}
+
+static int
+do_thr_wake(long tid)
+{
+	return (unimplemented(TARGET_FREEBSD_NR_thr_wake));
+}
+
+static int
+do_thr_set_name(long tid, char *name)
+{
+	return (unimplemented(TARGET_FREEBSD_NR_thr_set_name));
+}
+
+#endif /* CONFIG_USE_NPTL */
 
 /* do_syscall() should always have a single exit point at the end so
    that actions, such as logging of syscall results, can be performed.
@@ -4091,6 +4456,23 @@ do_stat:
 	 break;
 #endif
 
+#ifdef TARGET_FREEBSD_NR_getdomainname
+    case TARGET_FREEBSD_NR_getdomainname:
+	 ret = unimplemented(num);
+	 break;
+#endif
+#ifdef TARGET_FREEBSD_NR_setdomainname
+    case TARGET_FREEBSD_NR_setdomainname:
+	 ret = unimplemented(num);
+	 break;
+#endif
+#ifdef TARGET_FREEBSD_NR_uname
+    case TARGET_FREEBSD_NR_uname:
+	 ret = unimplemented(num);
+	 break;
+#endif
+
+
 #if 0 /* XXX not supported in libc yet, it seems (10.0 addition). */
     case TARGET_FREEBSD_NR_posix_fadvise:
 	 {
@@ -4136,6 +4518,124 @@ do_stat:
 	 break;
 #endif
 
+    case TARGET_FREEBSD_NR_thr_new:
+	 ret = do_thr_new(cpu_env, arg1, arg2);
+	 break;
+
+    case TARGET_FREEBSD_NR_thr_create:
+	 {
+		 ucontext_t ucxt;
+		 long tid;
+
+		 ret = do_thr_create(cpu_env, &ucxt, &tid, arg3);
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR_thr_set_name:
+	 if (!(p = lock_user_string(arg2)))
+		 goto efault;
+	 ret = do_thr_set_name(arg1, p);
+	 unlock_user(p, arg2, 0);
+	 break;
+
+    case TARGET_FREEBSD_NR_thr_self:
+	 {
+		 long tid;
+
+		 if ((ret = do_thr_self(&tid)) == 0) {
+			 if (put_user((abi_long)tid, arg1, abi_long))
+				 goto efault;
+		 }
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR_thr_suspend:
+	 {
+		 struct timespec ts;
+
+		 if (target_to_host_timespec(&ts, arg1))
+			 goto efault;
+
+		 ret = do_thr_suspend(&ts);
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR_thr_wake:
+	 ret = do_thr_wake(arg1);
+	 break;
+
+    case TARGET_FREEBSD_NR_thr_kill:
+	 ret = do_thr_kill(arg1, arg2);
+	 break;
+
+    case TARGET_FREEBSD_NR_thr_kill2:
+	 ret = do_thr_kill2(arg1, arg2, arg3);
+	 break;
+
+    case TARGET_FREEBSD_NR_thr_exit:
+	 ret = 0; /* suspress compile warning */
+	 do_thr_exit(cpu_env);
+	 /* Shouldn't be reached. */
+	 break;
+
+    case TARGET_FREEBSD_NR_rtprio_thread:
+	 ret = 0;
+	 break;
+
+    case TARGET_FREEBSD_NR_getcontext:
+	 {
+		 target_ucontext_t *ucp;
+		 sigset_t sigmask;
+
+		 if (0 == arg1) {
+			 ret = -TARGET_EINVAL;
+		 } else {
+			 ret = get_errno(sigprocmask(0, NULL, &sigmask));
+			 if (!is_error(ret)) {
+				 if (!(ucp = lock_user(VERIFY_WRITE, arg1,
+					     sizeof(target_ucontext_t), 0)))
+					 goto efault;
+				 ret = get_mcontext(cpu_env, &ucp->uc_mcontext,
+				     TARGET_MC_GET_CLEAR_RET);
+				 host_to_target_sigset(&ucp->uc_sigmask,
+				     &sigmask);
+				 memset(ucp->__spare__, 0,
+				     sizeof(ucp->__spare__));
+				 unlock_user(ucp, arg1,
+				     sizeof(target_ucontext_t));
+			 }
+		 }
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR_setcontext:
+	 {
+		 target_ucontext_t *ucp;
+		 sigset_t sigmask;
+
+		 if (0 == arg1) {
+			 ret = -TARGET_EINVAL;
+		 } else {
+			 if (!(ucp = lock_user(VERIFY_READ, arg1,
+				     sizeof(target_ucontext_t), 1)))
+				 goto efault;
+			 ret = set_mcontext(cpu_env, &ucp->uc_mcontext, 0);
+			 target_to_host_sigset(&sigmask, &ucp->uc_sigmask);
+			 unlock_user(ucp, arg1, sizeof(target_ucontext_t));
+			 if (0 == ret)
+				 (void)sigprocmask(SIG_SETMASK, &sigmask, NULL);
+		 }
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR_swapcontext:
+	 /*
+	  * XXX Does anything besides old implementations of
+	  * setjmp()/longjmp() uses these?
+	  */
+	 ret = unimplemented(num);
+	 break;
+
     case TARGET_FREEBSD_NR_yield:
     case TARGET_FREEBSD_NR_sched_setparam:
     case TARGET_FREEBSD_NR_sched_getparam:
@@ -4146,27 +4646,12 @@ do_stat:
     case TARGET_FREEBSD_NR_sched_get_priority_min:
     case TARGET_FREEBSD_NR_sched_rr_get_interval:
 
-
     case TARGET_FREEBSD_NR_reboot:
     case TARGET_FREEBSD_NR_shutdown:
 
     case TARGET_FREEBSD_NR_swapon:
     case TARGET_FREEBSD_NR_swapoff:
 
-    case TARGET_FREEBSD_NR_thr_create:
-    case TARGET_FREEBSD_NR_thr_exit:
-    case TARGET_FREEBSD_NR_thr_self:
-    case TARGET_FREEBSD_NR_thr_suspend:
-    case TARGET_FREEBSD_NR_thr_wake:
-    case TARGET_FREEBSD_NR_thr_new:
-    case TARGET_FREEBSD_NR_thr_set_name:
-    case TARGET_FREEBSD_NR_thr_kill2:
-
-    case TARGET_FREEBSD_NR_getcontext:
-    case TARGET_FREEBSD_NR_setcontext:
-    case TARGET_FREEBSD_NR_swapcontext:
-
-    case TARGET_FREEBSD_NR_rtprio_thread:
     case TARGET_FREEBSD_NR_cpuset:
     case TARGET_FREEBSD_NR_cpuset_getid:
     case TARGET_FREEBSD_NR_cpuset_setid:
@@ -4175,6 +4660,7 @@ do_stat:
 
     case TARGET_FREEBSD_NR__umtx_lock:
     case TARGET_FREEBSD_NR__umtx_unlock:
+    case TARGET_FREEBSD_NR__umtx_op:
 
     case TARGET_FREEBSD_NR_rctl_get_racct:
     case TARGET_FREEBSD_NR_rctl_get_rules:
@@ -4184,16 +4670,6 @@ do_stat:
 
     case TARGET_FREEBSD_NR_ntp_adjtime:
     case TARGET_FREEBSD_NR_ntp_gettime:
-
-#ifdef TARGET_FREEBSD_NR_getdomainname
-    case TARGET_FREEBSD_NR_getdomainname:
-#endif
-#ifdef TARGET_FREEBSD_NR_setdomainname
-    case TARGET_FREEBSD_NR_setdomainname:
-#endif
-#ifdef TARGET_FREEBSD_NR_uname
-    case TARGET_FREEBSD_NR_uname:
-#endif
 
     case TARGET_FREEBSD_NR_sctp_peeloff:
     case TARGET_FREEBSD_NR_sctp_generic_sendmsg:

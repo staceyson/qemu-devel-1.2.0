@@ -1386,6 +1386,11 @@ fi
 
 if test "$nptl" != "no" ; then
   cat > $TMPC <<EOF
+#ifdef __FreeBSD__
+int main(void) {
+  return (0);
+}
+#else
 #include <sched.h>
 #include <linux/futex.h>
 int main(void) {
@@ -1394,6 +1399,7 @@ int main(void) {
 #endif
   return 0;
 }
+#endif
 EOF
 
   if compile_object ; then
@@ -3751,6 +3757,7 @@ case "$target_arch2" in
     TARGET_ARCH=mips64
     TARGET_BASE_ARCH=mips
     echo "TARGET_ABI_MIPSN64=y" >> $config_target_mak
+    target_nptl="yes"
     target_phys_bits=64
     target_long_alignment=8
   ;;

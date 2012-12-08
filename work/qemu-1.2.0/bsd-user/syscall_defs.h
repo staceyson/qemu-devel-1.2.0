@@ -416,6 +416,11 @@ struct target_shmid_ds {
 	abi_ulong	shm_ctime;	/* time of last change by shmctl() */
 };
 
+#define TARGET_UCONTEXT_MAGIC	0xACEDBADE
+#define TARGET_MC_GET_CLEAR_RET	0x0001
+#define TARGET_MC_ADD_MAGIC	0x0002
+#define TARGET_MC_SET_ONSTACK	0x0004
+
 /* this struct defines a stack used during syscall handling */
 typedef struct target_sigaltstack {
 	abi_long	ss_sp;
@@ -477,95 +482,6 @@ typedef struct target_siginfo {
 	} _reason;
 } target_siginfo_t;
 
-#if defined(TARGET_MIPS)
-
-struct target_sigcontext {
-	target_sigset_t	sc_mask;        /* signal mask to retstore */
-	int32_t		sc_onstack;     /* sigstack state to restore */
-	abi_long	sc_pc;          /* pc at time of signal */
-	abi_long	sc_reg[32];     /* processor regs 0 to 31 */
-	abi_long	mullo, mulhi;   /* mullo and mulhi registers */
-	int32_t		sc_fpused;      /* fp has been used */
-	abi_long	sc_fpregs[33];  /* fp regs 0 to 31 & csr */
-	abi_long	sc_fpc_eir;     /* fp exception instr reg */
-	/* int32_t reserved[8]; */
-};
-
-typedef struct target_mcontext {
-	int32_t		mc_onstack;    /* sigstack state to restore */
-	abi_long	mc_pc;         /* pc at time of signal */
-	abi_long	mc_regs[32];   /* process regs 0 to 31 */
-	abi_long	sr;             /* status register */
-	abi_long	mullo, mulhi;
-	int32_t		mc_fpused;     /* fp has been used */
-	abi_long	mc_fpregs[33]; /* fp regs 0 to 32 & csr */
-	abi_long	mc_fpc_eir;    /* fp exception instr reg */
-	abi_ulong	mc_tls;        /* pointer to TLS area */
-} target_mcontext_t;
-
-typedef struct target_ucontext {
-	target_sigset_t		uc_sigmask;
-	target_mcontext_t	uc_mcontext;
-	target_ulong		uc_link;
-	target_stack_t		uc_stack;
-	int32_t			uc_flags;
-	int32_t			__space__[8];
-} target_ucontext_t;
-
-struct target_sigframe {
-	abi_ulong	sf_signum;
-	abi_ulong	sf_siginfo;	/* code or pointer to sf_si */
-	abi_ulong	sf_ucontext;	/* points to sf_uc */
-	abi_ulong	sf_addr;	/* undocumented 4th arg */
-	target_ucontext_t	sf_uc;	/* = *sf_uncontext */
-	target_siginfo_t	sf_si;	/* = *sf_siginfo (SA_SIGINFO case)*/
-	uint32_t	__spare__[2];
-};
-
-#elif defined(TARGET_SPARC64)
-
-struct target_mcontext {
-	uint64_t mc_global[8];
-	uint64_t mc_out[8];
-	uint64_t mc_local[8];
-	uint64_t mc_in[8];
-	uint32_t mc_fp[64];
-} __aligned(64);
-
-typedef struct target_mcontext target_mcontext_t;
-
-typedef struct target_ucontext {
-	target_sigset_t		uc_sigmask;
-	target_mcontext_t	uc_mcontext;
-	target_ulong		uc_link;
-	target_stack_t		uc_stack;
-	int32_t			uc_flags;
-	int32_t			__space__[8];
-} target_ucontext_t;
-
-struct target_sigframe {
-	target_ucontext_t	sf_uc;
-	target_siginfo_t	sf_si;
-};
-
-#else
-
-typedef target_ulong target_mcontext_t; /* dummy */
-
-#endif
-
-/*  XXX where did this come from?
-typedef struct target_ucontext {
-	target_ulong		uc_flags;
-	target_ulong		uc_link;
-	target_stack_t		uc_stack;
-	target_mcontext_t	uc_mcontext;
-	target_ulong		uc_filer[80];
-	target_sigset_t		uc_sigmask;
-} target_ucontext_t;
-*/
-
-
 #ifdef BSWAP_NEEDED
 static inline void
 tswap_sigset(target_sigset_t *d, const target_sigset_t *s)
@@ -603,3 +519,34 @@ void host_to_target_old_sigset(abi_ulong *old_sigset, const sigset_t *sigset);
 void target_to_host_old_sigset(sigset_t *sigset, const abi_ulong *old_sigset);
 int do_sigaction(int sig, const struct target_sigaction *act,
     struct target_sigaction *oact);
+
+
+/*
+ * FreeBSD thread support.
+ */
+
+#define	TARGET_THR_SUSPENDED	0x0001
+#define	TARGET_THR_SYSTEM_SCOPE	0x0002
+
+/* sysarch() ops */
+#define	TARGET_MIPS_SET_TLS	1
+#define	TARGET_MIPS_GET_TLS	2
+
+struct target_thr_param {
+	abi_ulong	start_func;	/* thread entry function. */
+	abi_ulong	arg;		/* argument for entry function. */
+	abi_ulong	stack_base;	/* stack base address. */
+	abi_ulong	stack_size;	/* stack size. */
+	abi_ulong	tls_base;	/* tls base address. */
+	abi_ulong	tls_size;	/* tls size. */
+	abi_ulong	child_tid;	/* address to store new TID. */
+	abi_ulong	parent_tid;	/* parent access the new TID here. */
+	abi_ulong	rtp;		/* Real-time scheduling priority. */
+	abi_ulong	spare[3];	/* spares. */
+};
+
+struct target_rtprio {
+	uint16_t	type;
+	uint16_t	prio;
+};
+

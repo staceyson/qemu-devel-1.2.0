@@ -31,7 +31,7 @@
 #include "qemu.h"
 #include "target_signal.h"
 
-//#define DEBUG_SIGNAL
+// #define DEBUG_SIGNAL
 
 #ifndef _NSIG
 #define _NSIG	128
@@ -606,101 +606,31 @@ do_sigaction(int sig, const struct target_sigaction *act,
 	return (ret);
 }
 
-#if defined(TARGET_MIPS64)
-static inline int
-restore_sigmcontext(CPUMIPSState *regs, target_mcontext_t *mc)
-{
-	int i, err = 0;
-
-	for(i = 1; i < 32; i++)
-		err |= __get_user(regs->active_tc.gpr[i],
-		    &mc->mc_regs[i]);
-	err |= __get_user(regs->CP0_EPC, &mc->mc_pc);
-	err |= __get_user(regs->active_tc.LO[0], &mc->mullo);
-	err |= __get_user(regs->active_tc.HI[0], &mc->mulhi);
-	err |= __get_user(regs->tls_value, &mc->mc_tls); /* XXX thread tls */
-
-#if 0	/* XXX */
-	int used_fp = 0;
-
-	err |= __get_user(used_fp, &mc->mc_fpused);
-	conditional_used_math(used_fp);
-
-	preempt_disabled();
-	if (used_math()) {
-		/* restore fpu context if we have used it before */
-		own_fpu();
-		err |= restore_fp_context(mc);
-	} else {
-		/* signal handler may have used FPU. Give it up. */
-		lose_fpu();
-	}
-	preempt_enable();
-#endif
-
-	return (err);
-}
-
-static inline int
-setup_sigmcontext(CPUMIPSState *regs, target_mcontext_t *mc, int32_t oonstack)
-{
-	int i, err = 0;
-	abi_long ucontext_magic = TARGET_UCONTEXT_MAGIC;
-
-	err  = __put_user(oonstack ? 1 : 0, &mc->mc_onstack);
-	err |= __put_user(regs->active_tc.PC, &mc->mc_pc);
-	err |= __put_user(regs->active_tc.LO[0], &mc->mullo);
-	err |= __put_user(regs->active_tc.HI[0], &mc->mulhi);
-	err |= __put_user(regs->tls_value, &mc->mc_tls);  /* XXX thread tls */
-
-	err |= __put_user(ucontext_magic, &mc->mc_regs[0]);
-	for(i = 1; i < 32; i++)
-		err |= __put_user(regs->active_tc.gpr[i], &mc->mc_regs[i]);
-
-	err |= __put_user(0, &mc->mc_fpused);
-
-#if 0	/* XXX */
-	err |= __put_user(used_math(), &mc->mc_fpused);
-	if (used_math())
-		goto out;
-
-	/*
-	 * Save FPU state to signal context. Signal handler will "inherit"
-	 * current FPU state.
-	 */
-	preempt_disable();
-
-	if (!is_fpu_owner()) {
-		own_fpu();
-		for(i = 0; i < 33; i++)
-			err |= __put_user(regs->active_tc.fpregs[i], &mc->mc_fpregs[i]);
-	}
-	err |= save_fp_context(fg);
-
-	preempt_enable();
-out:
-#endif
-	return (err);
-}
+#if defined(TARGET_MIPS) || defined(TARGET_SPARC64)
 
 static inline abi_ulong
-get_sigframe(struct target_sigaction *ka, CPUMIPSState *regs, size_t frame_size)
+get_sigframe(struct target_sigaction *ka, CPUArchState *regs, size_t frame_size)
 {
 	abi_ulong sp;
 
 	/* Use default user stack */
-	sp = regs->active_tc.gpr[29];
+	sp = get_sp_from_cpustate(regs); 
 
 	if ((ka->sa_flags & TARGET_SA_ONSTACK) && (sas_ss_flags(sp) == 0)) {
-		sp = target_sigaltstack_used.ss_sp + target_sigaltstack_used.ss_size;
+		sp = target_sigaltstack_used.ss_sp +
+		    target_sigaltstack_used.ss_size;
 	}
 
+#if defined(TARGET_MIPS)
 	return ((sp - frame_size) & ~7);
+#else
+	return (sp - frame_size);
+#endif
 }
 
-/* compare to mips/mips/pm_machdep.c sendsig() */
+/* compare to mips/mips/pm_machdep.c and sparc64/sparc64/machdep.c sendsig() */
 static void setup_frame(int sig, struct target_sigaction *ka,
-    target_sigset_t *set, CPUMIPSState *regs)
+    target_sigset_t *set, CPUArchState *regs)
 {
 	struct target_sigframe *frame;
 	abi_ulong frame_addr;
@@ -709,54 +639,36 @@ static void setup_frame(int sig, struct target_sigaction *ka,
 #ifdef DEBUG_SIGNAL
 	fprintf(stderr, "setup_frame()\n");
 #endif
+#if defined(TARGET_SPARC64)
+	if (!sparc_user_sigtramp) {
+		/* No signal trampoline... kill the process. */
+		fprintf(stderr, "setup_frame(): no sigtramp\n");
+		force_sig(TARGET_SIGKILL);
+	}
+#endif
 
 	frame_addr = get_sigframe(ka, regs, sizeof(*frame));
 	if (!lock_user_struct(VERIFY_WRITE, frame, frame_addr, 0))
 		goto give_sigsegv;
 
-	if (setup_sigmcontext(regs, &frame->sf_uc.uc_mcontext,
-		! on_sig_stack(frame_addr)))
+#if defined(TARGET_MIPS)
+	int mflags = on_sig_stack(frame_addr) ? TARGET_MC_ADD_MAGIC :
+	    TARGET_MC_SET_ONSTACK | TARGET_MC_ADD_MAGIC;
+#else
+	int mflags = 0;
+#endif
+	if (get_mcontext(regs, &frame->sf_uc.uc_mcontext, mflags))
 		goto give_sigsegv;
 
 	for(i = 0; i < TARGET_NSIG_WORDS; i++) {
-		if (__put_user(set->__bits[i], &frame->sf_uc.uc_sigmask.__bits[i]))
+		if (__put_user(set->__bits[i],
+			&frame->sf_uc.uc_sigmask.__bits[i]))
 			goto give_sigsegv;
 	}
 
-	/* fill in sigframe structure */
-	if (__put_user(sig, &frame->sf_signum))
-		goto give_sigsegv;
-	if (__put_user(0, &frame->sf_siginfo))
-		goto give_sigsegv;
-	if (__put_user(0, &frame->sf_ucontext))
+	if (set_sigtramp_args(regs, sig, frame, frame_addr, ka))
 		goto give_sigsegv;
 
-	/* fill in siginfo structure */
-	if (__put_user(sig, &frame->sf_si.si_signo))
-		goto give_sigsegv;
-	if (__put_user(TARGET_SA_SIGINFO, &frame->sf_si.si_code))
-		goto give_sigsegv;
-	if (__put_user(regs->CP0_BadVAddr, &frame->sf_si.si_addr))
-		goto give_sigsegv;
-
-	/*
-	 * Arguments to signal handler:
-	 * 	a0 ($4) = signal number
-	 * 	a1 ($5) = siginfo pointer
-	 * 	a2 ($6) = ucontext pointer
-	 * 	PC = signal handler pointer
-	 * 	t9 ($25) = signal handler pointer
-	 * 	$29 = point to sigframe struct
-	 * 	ra ($31) = sigtramp at base of user stack
-	 */
-	regs->active_tc.gpr[ 4] = sig;
-	regs->active_tc.gpr[ 5] = frame_addr +
-	    offsetof(struct target_sigframe, sf_si);
-	regs->active_tc.gpr[ 6] = frame_addr +
-	    offsetof(struct target_sigframe, sf_uc);
-	regs->active_tc.gpr[25] = regs->active_tc.PC = ka->_sa_handler;
-	regs->active_tc.gpr[29] = frame_addr;
-	regs->active_tc.gpr[31] = TARGET_PS_STRINGS - TARGET_SZSIGCODE;
 	unlock_user_struct(frame, frame_addr, 1);
 	return;
 
@@ -766,7 +678,7 @@ give_sigsegv:
 }
 
 long
-do_sigreturn(CPUMIPSState *regs, abi_ulong uc_addr)
+do_sigreturn(CPUArchState *regs, abi_ulong uc_addr)
 {
 	target_ucontext_t *ucontext;
 	sigset_t blocked;
@@ -784,14 +696,17 @@ do_sigreturn(CPUMIPSState *regs, abi_ulong uc_addr)
 			goto badframe;
 	}
 
-	if (restore_sigmcontext(regs, &ucontext->uc_mcontext))
+	if (set_mcontext(regs, &ucontext->uc_mcontext, 0))
 		goto badframe;
 
 	target_to_host_sigset_internal(&blocked, &target_set);
 	sigprocmask(SIG_SETMASK, &blocked, NULL);
 
-	regs->active_tc.PC = regs->CP0_EPC;
-	regs->CP0_EPC = 0;  /* XXX  for nested signals ? */
+#if defined(TARGET_MIPS)
+	CPUMIPSState *mips_regs = (CPUMIPSState *)regs;
+	mips_regs->active_tc.PC = mips_regs->CP0_EPC;
+	mips_regs->CP0_EPC = 0;  /* XXX  for nested signals ? */
+#endif
 	return (-TARGET_QEMU_ESIGRETURN);
 
 badframe:
@@ -799,9 +714,10 @@ badframe:
 	return (0);
 }
 
-#elif defined(TARGET_SPARC64)
 
-extern abi_ulong sparc_user_sigtramp;
+
+/* #elif defined(TARGET_SPARC64) */
+#if 0
 
 #define	mc_flags	mc_global[0]
 #define	mc_sp		mc_out[6]
@@ -1039,6 +955,7 @@ badframe:
 	force_sig(TARGET_SIGSEGV);
 	return (0);
 }
+#endif
 
 #else
 

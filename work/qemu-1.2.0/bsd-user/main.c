@@ -34,6 +34,10 @@
 #include "qemu-timer.h"
 #include "envlist.h"
 
+#if defined(CONFIG_USE_NPTL) && defined(__FreeBSD__)
+#include <sys/thr.h>
+#endif
+
 #define DEBUG_LOGFILE "/tmp/qemu.log"
 
 int singlestep;
@@ -70,41 +74,185 @@ int cpu_get_pic_interrupt(CPUX86State *env)
 }
 #endif
 
-/* These are no-ops because we are not threadsafe.  */
-static inline void cpu_exec_start(CPUArchState *env)
-{
-}
+#if defined(CONFIG_USE_NPTL)
+/* Helper routines for implementing atomic operations. */
 
-static inline void cpu_exec_end(CPUArchState *env)
-{
-}
+/*
+ * To implement exclusive operations we force all cpus to synchronize.
+ * We don't require a full sync, only that no cpus are executing guest code.
+ * The alternative is to map target atomic ops onto host eqivalents,
+ * which requires quite a lot of per host/target work.
+ */
+static pthread_mutex_t cpu_list_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t exclusive_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t exclusive_cond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t exclusive_resume = PTHREAD_COND_INITIALIZER;
+static int pending_cpus;
 
-static inline void start_exclusive(void)
-{
-}
-
-static inline void end_exclusive(void)
-{
-}
-
+/* Make sure everything is in a consistent state for calling fork(). */
 void fork_start(void)
 {
+	pthread_mutex_lock(&tb_lock);
+	pthread_mutex_lock(&exclusive_lock);
+	mmap_fork_start();
 }
 
 void fork_end(int child)
+{
+	mmap_fork_end(child);
+	if (child) {
+		/*
+		 * Child processes created by fork() only have a single thread.
+		 * Discard information about the parent threads.
+		 */
+		first_cpu = thread_env;
+		thread_env->next_cpu = NULL;
+		pending_cpus = 0;
+		pthread_mutex_init(&exclusive_lock, NULL);
+		pthread_mutex_init(&cpu_list_mutex, NULL);
+		pthread_cond_init(&exclusive_cond, NULL);
+		pthread_cond_init(&exclusive_resume, NULL);
+		pthread_mutex_init(&tb_lock, NULL);
+		gdbserver_fork(thread_env);
+	} else {
+		pthread_mutex_unlock(&exclusive_lock);
+		pthread_mutex_unlock(&tb_lock);
+	}
+}
+
+/*
+ * Wait for pending exclusive operations to complete.  The exclusive lock
+ * must be held.
+ */
+static inline void
+exclusive_idle(void)
+{
+	while (pending_cpus) {
+		pthread_cond_wait(&exclusive_resume, &exclusive_lock);
+	}
+}
+
+/* Start an exclusive operation.  Must only be called outside of cpu_exec. */
+static inline void
+start_exclusive(void)
+{
+	CPUArchState *other;
+
+	pthread_mutex_lock(&exclusive_lock);
+	exclusive_idle();
+
+	pending_cpus = 1;
+	/* Make all other cpus stop executing. */
+	for (other = first_cpu; other; other = other->next_cpu) {
+		if (other->running) {
+			pending_cpus++;
+			cpu_exit(other);
+		}
+	}
+	if (pending_cpus > 1) {
+		pthread_cond_wait(&exclusive_cond, &exclusive_lock);
+	}
+}
+
+/* Finish an exclusive operation. */
+static inline void
+end_exclusive(void)
+{
+	pending_cpus = 0;
+	pthread_cond_broadcast(&exclusive_resume);
+	pthread_mutex_unlock(&exclusive_lock);
+}
+
+/* Wait for exclusive ops to finish, and begin cpu execution. */
+static inline void
+cpu_exec_start(CPUArchState *env)
+{
+	pthread_mutex_lock(&exclusive_lock);
+	exclusive_idle();
+	env->running = 1;
+	pthread_mutex_unlock(&exclusive_lock);
+}
+
+/* Mark cpu as not excuting, and release pending exclusive ops. */
+static inline void
+cpu_exec_end(CPUArchState *env)
+{
+	pthread_mutex_lock(&exclusive_lock);
+	env->running = 0;
+	if (pending_cpus > 1) {
+		pending_cpus--;
+		if (pending_cpus == 1) {
+			pthread_cond_signal(&exclusive_cond);
+		}
+	}
+	exclusive_idle();
+	pthread_mutex_unlock(&exclusive_lock);
+}
+
+void
+cpu_list_lock(void)
+{
+	pthread_mutex_lock(&cpu_list_mutex);
+}
+
+void
+cpu_list_unlock(void)
+{
+	pthread_mutex_unlock(&cpu_list_mutex);
+}
+
+#else /* ! CONFIG_USE_NPTL */
+
+/* These are no-ops because we are not threadsafe.  */
+void
+fork_start(void)
+{
+}
+
+void
+fork_end(int child)
 {
     if (child) {
         gdbserver_fork(thread_env);
     }
 }
 
-void cpu_list_lock(void)
+static inline void
+exclusive_idle(void)
 {
 }
 
-void cpu_list_unlock(void)
+static inline void
+start_exclusive(void)
 {
 }
+
+static inline void
+end_exclusive(void)
+{
+}
+
+static inline void
+cpu_exec_start(CPUArchState *env)
+{
+}
+
+
+static inline void
+cpu_exec_end(CPUArchState *env)
+{
+}
+
+void
+cpu_list_lock(void)
+{
+}
+
+void
+cpu_list_unlock(void)
+{
+}
+#endif /* CONFIG_USE_NPTL */
 
 #ifdef TARGET_I386
 /***********************************************************/
@@ -1205,6 +1353,18 @@ static void usage(void)
 }
 
 THREAD CPUArchState *thread_env;
+
+void task_settid(TaskState *ts)
+{
+	if (0 == ts->ts_tid) {
+#ifdef CONFIG_USE_NPTL
+		(void)thr_self(&ts->ts_tid);
+#else
+		/* When no threads then just use PID */
+		ts->ts_tid = getpid();
+#endif
+	}
+}
 
 void stop_all_tasks(void)
 {

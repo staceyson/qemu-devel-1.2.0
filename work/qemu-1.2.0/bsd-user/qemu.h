@@ -25,8 +25,8 @@ abi_long memcpy_to_target(abi_ulong dest, const void *src,
 
 #include "syscall_defs.h"
 #include "syscall.h"
-#include "target_signal.h"
 #include "target_vmparam.h"
+#include "target_signal.h"
 #include "gdbstub.h"
 
 #if defined(CONFIG_USE_NPTL)
@@ -80,7 +80,7 @@ struct emulated_sigtable {
 typedef struct TaskState {
     struct TaskState *next;
     int used; /* non zero if used */
-#if 1
+    long ts_tid;	/* tid (or pid) of this task */
 #ifdef TARGET_ARM
     int swi_errno;
 #endif
@@ -90,7 +90,6 @@ typedef struct TaskState {
     uint32_t heap_limit;
 #endif
     uint32_t stack_base;
-#endif
     struct image_info *info;
     struct bsd_binprm *bprm;
 
