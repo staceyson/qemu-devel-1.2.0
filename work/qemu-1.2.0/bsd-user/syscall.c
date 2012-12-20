@@ -2181,7 +2181,7 @@ new_thread_start(void *arg)
 	CPUMIPSState *regs = env;
 	regs->active_tc.gpr[25] = regs->active_tc.PC = info->param.start_func;
 	regs->active_tc.gpr[ 4] = info->param.arg;
-	regs->active_tc.gpr[29] = regs->active_tc.gpr[30] = info->param.stack_base;
+	regs->active_tc.gpr[29] = info->param.stack_base;
 #endif
 	/* Eenable signals */
 	sigprocmask(SIG_SETMASK, &info->sigmask, NULL);
@@ -2383,9 +2383,7 @@ do_thr_exit(CPUArchState *cpu_env)
 		}
 #endif
 		thread_env = NULL;
-#if 0	/* XXX we may have a memory leak here */
 		object_delete(OBJECT(ENV_GET_CPU(cpu_env)));
-#endif
 		g_free(ts);
 		pthread_exit(NULL);
 	}

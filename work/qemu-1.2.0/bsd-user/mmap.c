@@ -74,6 +74,8 @@ void mmap_unlock(void)
 }
 #endif
 
+#if 0  	/* XXX not sure why we need our own g_malloc() and friends.
+	   g_strdup(), however, has serious problems with this g_malloc/g_free */
 void *qemu_vmalloc(size_t size)
 {
     void *p;
@@ -133,6 +135,7 @@ void *g_realloc(void *ptr, size_t size)
     g_free(ptr);
     return new_ptr;
 }
+#endif
 
 /* NOTE: all the constants are the HOST ones, but addresses are target. */
 int target_mprotect(abi_ulong start, abi_ulong len, int prot)
