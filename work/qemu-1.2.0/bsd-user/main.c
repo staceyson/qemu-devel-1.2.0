@@ -888,7 +888,10 @@ void cpu_loop(CPUMIPSState *env)
 
 	for(;;) {
 		cpu_exec_start(env);
+		/* XXX there is a concurrency problem - giant lock for now */
+		pthread_mutex_lock(&exclusive_lock); /* XXX */
 		trapnr = cpu_mips_exec(env);
+		pthread_mutex_unlock(&exclusive_lock); /* XXX */
 		cpu_exec_end(env);
 		switch(trapnr) {
 		case EXCP_SYSCALL: /* syscall exception */
