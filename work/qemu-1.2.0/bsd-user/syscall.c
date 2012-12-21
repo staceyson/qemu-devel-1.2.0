@@ -48,6 +48,7 @@
 #include <sys/rtprio.h>
 #include <sys/umtx.h>
 #include <pthread.h>
+#include <machine/atomic.h>
 #endif
 #include <sys/un.h>
 #include <sys/ipc.h>
@@ -2482,6 +2483,43 @@ do_thr_set_name(long tid, char *name)
 
 #endif /* CONFIG_USE_NPTL */
 
+static int
+do_umtx_lock(abi_ulong umtx_addr, uint32_t id)
+{
+	int ret = 0;
+
+	for (;;) {
+		ret = get_errno(_umtx_op(g2h(umtx_addr +
+			    offsetof(struct target_umtx, u_owner)),
+			UMTX_OP_MUTEX_WAIT, UMTX_UNOWNED, 0, 0));
+		if (ret)
+			return (ret);
+		if (atomic_cmpset_acq_32(g2h(umtx_addr +
+			    offsetof(struct target_umtx, u_owner)),
+			UMTX_UNOWNED, id))
+			return (0);
+	}
+}
+
+static int
+do_umtx_unlock(abi_ulong umtx_addr, uint32 id)
+{
+	uint32_t owner;
+
+	do {
+		if (get_user_u32(owner, umtx_addr +
+			offsetof(struct target_umtx, u_owner)))
+			return (-TARGET_EFAULT);
+		if (owner != id)
+			return (-TARGET_EPERM);
+	} while (!atomic_cmpset_rel_32(g2h(umtx_addr +
+		    offsetof(struct target_umtx, u_owner)), owner,
+		UMUTEX_UNOWNED));
+
+	return (0);
+}
+
+
 /* do_syscall() should always have a single exit point at the end so
    that actions, such as logging of syscall results, can be performed.
    All errnos that do_syscall() returns must be -TARGET_<errcode>. */
@@ -4634,6 +4672,93 @@ do_stat:
 	 ret = unimplemented(num);
 	 break;
 
+    case TARGET_FREEBSD_NR__umtx_lock:
+	 {
+		 long tid;
+
+		 thr_self(&tid);
+		 ret = do_umtx_lock(arg1, tswap32(tid));
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR__umtx_unlock:
+	 {
+		 long tid;
+
+		 thr_self(&tid);
+		 ret = do_umtx_unlock(arg1, tswap32(tid));
+	 }
+	 break;
+
+    case TARGET_FREEBSD_NR__umtx_op:
+	 {
+		 struct timespec ts;
+		 void *object = NULL;
+		 int operation;
+		 void *addr = NULL;
+		 void *addr2 = NULL;
+
+
+		 /* int _umtx_op(void *obj, int op, u_long val,
+		  * void *uaddr, void *uaddr2); */
+
+		 abi_ulong obj = arg1;
+		 int op = (int)arg2;
+		 u_long val = arg3;
+		 /* abi_ulong uaddr = arg4; */
+		 abi_ulong uaddr2 = arg5;
+
+		 switch(op) {
+		 case TARGET_UMTX_OP_LOCK:
+			 ret = do_umtx_lock(obj, tswap32((uint32_t)val));
+			 break;
+
+		 case TARGET_UMTX_OP_UNLOCK:
+			 ret = do_umtx_unlock(obj, tswap32((uint32_t)val));
+			 break;
+
+		 case TARGET_UMTX_OP_WAIT:
+			 if (uaddr2) {
+				 if (target_to_host_timespec(&ts, uaddr2))
+					 goto efault;
+				 addr2 = (void *)&ts;
+			 }
+			ret = get_errno(_umtx_op(g2h(obj), UMTX_OP_WAIT,
+				tswap32(val), addr, addr2));
+			break;
+
+		 case TARGET_UMTX_OP_WAKE:
+			 operation = UMTX_OP_WAKE;
+			 object = g2h(obj);
+			 ret = get_errno(_umtx_op(g2h(obj), UMTX_OP_WAKE,
+				 val, 0, 0));
+			 break;
+
+		 case TARGET_UMTX_OP_MUTEX_TRYLOCK:
+		 case TARGET_UMTX_OP_MUTEX_LOCK:
+		 case TARGET_UMTX_OP_MUTEX_UNLOCK:
+		 case TARGET_UMTX_OP_SET_CEILING:
+		 case TARGET_UMTX_OP_CV_WAIT:
+		 case TARGET_UMTX_OP_CV_SIGNAL:
+		 case TARGET_UMTX_OP_CV_BROADCAST:
+		 case TARGET_UMTX_OP_WAIT_UINT:
+		 case TARGET_UMTX_OP_RW_RDLOCK:
+		 case TARGET_UMTX_OP_RW_WRLOCK:
+		 case TARGET_UMTX_OP_RW_UNLOCK:
+		 case TARGET_UMTX_OP_WAIT_UINT_PRIVATE:
+		 case TARGET_UMTX_OP_WAKE_PRIVATE:
+		 case TARGET_UMTX_OP_MUTEX_WAIT:
+		 case TARGET_UMTX_OP_MUTEX_WAKE:
+		 case TARGET_UMTX_OP_SEM_WAIT:
+		 case TARGET_UMTX_OP_SEM_WAKE:
+		 case TARGET_UMTX_OP_NWAKE_PRIVATE:
+		 default:
+			 ret = -TARGET_EINVAL;
+			 break;
+		 }
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_yield:
     case TARGET_FREEBSD_NR_sched_setparam:
     case TARGET_FREEBSD_NR_sched_getparam:
@@ -4655,10 +4780,6 @@ do_stat:
     case TARGET_FREEBSD_NR_cpuset_setid:
     case TARGET_FREEBSD_NR_cpuset_getaffinity:
     case TARGET_FREEBSD_NR_cpuset_setaffinity:
-
-    case TARGET_FREEBSD_NR__umtx_lock:
-    case TARGET_FREEBSD_NR__umtx_unlock:
-    case TARGET_FREEBSD_NR__umtx_op:
 
     case TARGET_FREEBSD_NR_rctl_get_racct:
     case TARGET_FREEBSD_NR_rctl_get_rules:

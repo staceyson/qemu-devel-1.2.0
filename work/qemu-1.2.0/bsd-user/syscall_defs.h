@@ -550,3 +550,70 @@ struct target_rtprio {
 	uint16_t	prio;
 };
 
+/*
+ * sys/_umtx.h
+ */
+
+struct target_umtx {
+	uint32_t	u_owner;	/* Owner of the mutex. */
+};
+
+struct target_umutex {
+	uint32_t	m_owner;	/* Owner of the mutex */
+	uint32_t	m_flags;	/* Flags of the mutex */
+	uint32_t	m_ceiling[2];	/* Priority protect ceiling */
+	uint32_t	m_spare[4];
+};
+
+struct target_ucond {
+	uint32_t	c_has_waiters;	/* Has waiters in kernel */
+	uint32_t	c_flags;	/* Flags of the condition variable */
+	uint32_t	c_clockid;	/* Clock id */
+	uint32_t	c_spare[1];
+};
+
+struct target_urwlock {
+	int32_t		rw_state;
+	uint32_t	rw_flags;
+	uint32_t	rw_blocked_readers;
+	uint32_t	rw_blocked_writers;
+	uint32_t	rw_spare[4];
+};
+
+struct target__usem {
+	uint32_t	_has_waiters;
+	uint32_t	_count;
+	uint32_t	_flags;
+};
+
+/*
+ * sys/utmx.h
+ */
+
+/* op code for _umtx_op */
+#define	TARGET_UMTX_OP_LOCK			0
+#define	TARGET_UMTX_OP_UNLOCK			1
+#define	TARGET_UMTX_OP_WAIT			2
+#define	TARGET_UMTX_OP_WAKE			3
+#define	TARGET_UMTX_OP_MUTEX_TRYLOCK		4
+#define	TARGET_UMTX_OP_MUTEX_LOCK		5
+#define	TARGET_UMTX_OP_MUTEX_UNLOCK		6
+#define	TARGET_UMTX_OP_SET_CEILING		7
+#define	TARGET_UMTX_OP_CV_WAIT			8
+#define	TARGET_UMTX_OP_CV_SIGNAL		9
+#define	TARGET_UMTX_OP_CV_BROADCAST		10
+#define	TARGET_UMTX_OP_WAIT_UINT		11
+#define	TARGET_UMTX_OP_RW_RDLOCK		12
+#define	TARGET_UMTX_OP_RW_WRLOCK		13
+#define	TARGET_UMTX_OP_RW_UNLOCK		14
+#define	TARGET_UMTX_OP_WAIT_UINT_PRIVATE	15
+#define	TARGET_UMTX_OP_WAKE_PRIVATE		16
+#define	TARGET_UMTX_OP_MUTEX_WAIT		17
+#define	TARGET_UMTX_OP_MUTEX_WAKE		18
+#define	TARGET_UMTX_OP_SEM_WAIT			19
+#define	TARGET_UMTX_OP_SEM_WAKE			20
+#define	TARGET_UMTX_OP_NWAKE_PRIVATE		21
+#define	TARGET_UMTX_OP_MAX			22
+
+/* flags for UMTX_OP_CV_WAIT */
+#define	TARGET_CHECK_UNPARKING			0x01
