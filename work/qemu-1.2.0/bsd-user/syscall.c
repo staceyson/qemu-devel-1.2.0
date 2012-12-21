@@ -2346,7 +2346,7 @@ do_thr_self(long *id)
 }
 
 static void
-do_thr_exit(CPUArchState *cpu_env)
+do_thr_exit(CPUArchState *cpu_env, abi_ulong tid_addr)
 {
 
 	if (first_cpu->next_cpu) {
@@ -2375,14 +2375,13 @@ do_thr_exit(CPUArchState *cpu_env)
 		cpu_list_unlock();
 		ts = ((CPUArchState *)cpu_env)->opaque;
 
-#if 0
-		if (ts->child_tidptr) {
+		if (tid_addr) {
 			/* Signal target userland that it can free the stack. */
-			put_user_u32(1, ts->child_tidptr);
-			_umtx_op(g2h(ts->child_tidptr), UMTX_OP_WAKE, INT_MAX,
-			    NULL, NULL);
+			if (! put_user_u32(1, tid_addr))
+				_umtx_op(g2h(tid_addr), UMTX_OP_WAKE, INT_MAX,
+				    NULL, NULL);
 		}
-#endif
+
 		thread_env = NULL;
 		object_delete(OBJECT(ENV_GET_CPU(cpu_env)));
 		g_free(ts);
@@ -2447,7 +2446,7 @@ do_thr_self(long *tid)
 }
 
 static void
-do_thr_exit(CPUArchState *cpu_env)
+do_thr_exit(CPUArchState *cpu_env, abi_ulong state_addr)
 {
 }
 
@@ -4610,7 +4609,7 @@ do_stat:
 
     case TARGET_FREEBSD_NR_thr_exit:
 	 ret = 0; /* suspress compile warning */
-	 do_thr_exit(cpu_env);
+	 do_thr_exit(cpu_env, arg1);
 	 /* Shouldn't be reached. */
 	 break;
 
