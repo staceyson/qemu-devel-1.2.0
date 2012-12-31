@@ -2377,7 +2377,7 @@ do_thr_exit(CPUArchState *cpu_env, abi_ulong tid_addr)
 
 		if (tid_addr) {
 			/* Signal target userland that it can free the stack. */
-			if (! put_user_u32(1, tid_addr))
+			if (! put_user_sal(1, tid_addr))
 				_umtx_op(g2h(tid_addr), UMTX_OP_WAKE, INT_MAX,
 				    NULL, NULL);
 		}
@@ -4588,10 +4588,13 @@ do_stat:
 	 {
 		 struct timespec ts;
 
-		 if (target_to_host_timespec(&ts, arg1))
-			 goto efault;
+		 if (arg1) {
+			 if (target_to_host_timespec(&ts, arg1))
+				 goto efault;
+			 ret = do_thr_suspend(&ts);
+		 } else
+			 ret = do_thr_suspend(NULL);
 
-		 ret = do_thr_suspend(&ts);
 	 }
 	 break;
 
