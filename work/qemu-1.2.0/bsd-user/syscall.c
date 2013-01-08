@@ -2483,41 +2483,612 @@ do_thr_set_name(long tid, char *name)
 #endif /* CONFIG_USE_NPTL */
 
 static int
-do_umtx_lock(abi_ulong umtx_addr, uint32_t id)
+tcmpset_al(abi_ulong *addr, abi_ulong a, abi_ulong b)
 {
-	int ret = 0;
+	abi_ulong current = tswapal(a);
+	abi_ulong new = tswapal(b);
 
+#ifdef TARGET_ABI32
+	return (atomic_cmpset_acq_32(addr, current, new));
+#else
+	return (atomic_cmpset_acq_64(addr, current, new));
+#endif
+}
+
+static int
+tcmpset_32(uint32_t *addr, uint32_t a, uint32_t b)
+{
+	uint32_t current = tswap32(a);
+	uint32_t new = tswap32(b);
+
+	return (atomic_cmpset_acq_32(addr, current, new));
+}
+
+static int
+do_lock_umtx(abi_ulong target_addr, abi_long id, struct timespec *timeout)
+{
+	abi_long owner;
+	int ret;
+
+	/*
+	 * XXX Note that memory at umtx_addr can change and so we need to be
+	 * careful and check for faults.
+	 */
 	for (;;) {
-		ret = get_errno(_umtx_op(g2h(umtx_addr +
-			    offsetof(struct target_umtx, u_owner)),
-			UMTX_OP_MUTEX_WAIT, UMTX_UNOWNED, 0, 0));
+		struct target_umtx *target_umtx;
+
+		if (!lock_user_struct(VERIFY_WRITE, target_umtx, target_addr, 0))
+			return (-TARGET_EFAULT);
+
+		/* Check the simple uncontested case. */
+		if (tcmpset_al(&target_umtx->u_owner,
+				TARGET_UMTX_UNOWNED, id)) {
+			unlock_user_struct(target_umtx, target_addr, 1);
+			return (0);
+		}
+
+		/* Check to see if the lock is contested but free. */
+		__get_user(owner, &target_umtx->u_owner);
+
+		if (TARGET_UMTX_CONTESTED == owner) {
+			if (tcmpset_al(&target_umtx->u_owner,
+					TARGET_UMTX_CONTESTED,
+					id | TARGET_UMTX_CONTESTED)) {
+				unlock_user_struct(target_umtx, target_addr, 1);
+				return (0);
+			}
+
+			/* We failed because it changed on us, restart. */
+			unlock_user_struct(target_umtx, target_addr, 1);
+			continue;
+		}
+
+		/* Set the contested bit and sleep. */
+		do {
+			__get_user(owner, &target_umtx->u_owner);
+			if (owner & TARGET_UMTX_CONTESTED)
+				break;
+		} while (!tcmpset_al(&target_umtx->u_owner, owner,
+			owner | TARGET_UMTX_CONTESTED));
+
+		__get_user(owner, &target_umtx->u_owner);
+		unlock_user_struct(target_umtx, target_addr, 1);
+
+		/* Byte swap, if needed, to match what is stored in user mem. */
+		owner = tswapal(owner);
+#ifdef TARGET_ABI32
+		ret = get_errno(_umtx_op(target_umtx, UMTX_OP_WAIT_UINT, owner,
+			NULL, timeout));
+#else
+		ret = get_errno(_umtx_op(target_umtx, UMTX_OP_WAIT, owner,
+			NULL, timeout));
+#endif
 		if (ret)
 			return (ret);
-		if (atomic_cmpset_acq_32(g2h(umtx_addr +
-			    offsetof(struct target_umtx, u_owner)),
-			UMTX_UNOWNED, id))
-			return (0);
 	}
 }
 
 static int
-do_umtx_unlock(abi_ulong umtx_addr, uint32 id)
+do_unlock_umtx(abi_ulong target_addr, abi_ulong id)
 {
-	uint32_t owner;
+	abi_ulong owner;
+	struct target_umtx *target_umtx;
 
-	do {
-		if (get_user_u32(owner, umtx_addr +
-			offsetof(struct target_umtx, u_owner)))
-			return (-TARGET_EFAULT);
-		if (owner != id)
-			return (-TARGET_EPERM);
-	} while (!atomic_cmpset_rel_32(g2h(umtx_addr +
-		    offsetof(struct target_umtx, u_owner)), owner,
-		UMUTEX_UNOWNED));
+	if (!lock_user_struct(VERIFY_WRITE, target_umtx, target_addr, 0))
+		return (-TARGET_EFAULT);
+
+	__get_user(owner, &target_umtx->u_owner);
+	if ((owner & ~TARGET_UMTX_CONTESTED) != id) {
+		unlock_user_struct(target_umtx, target_addr, 1);
+		return (-TARGET_EPERM);
+	}
+
+	/* Check the simple uncontested case. */
+	if ((owner & ~TARGET_UMTX_CONTESTED) == 0)
+		if (tcmpset_al(&target_umtx->u_owner, owner,
+			TARGET_UMTX_UNOWNED)) {
+			unlock_user_struct(target_umtx, target_addr, 1);
+			return (0);
+		}
+
+	/* This is a contested lock. Unlock it. */
+	__put_user(TARGET_UMTX_UNOWNED, &target_umtx->u_owner);
+	unlock_user_struct(target_umtx, target_addr, 1);
+
+	/* Wake up all those contesting it. */
+	_umtx_op(target_umtx, UMTX_OP_WAKE, 0, 0, 0);
 
 	return (0);
 }
 
+static int
+do_lock_umutex(abi_ulong target_addr, uint32_t id, struct timespec *ts,
+    int mode)
+{
+	uint32_t owner, flags;
+	int ret;
+
+	for (;;) {
+		struct target_umutex *target_umutex;
+
+		if (!lock_user_struct(VERIFY_WRITE, target_umutex,
+			target_addr, 0))
+			return (-TARGET_EFAULT);
+
+		__get_user(owner, &target_umutex->m_owner);
+
+		if (TARGET_UMUTEX_WAIT == mode) {
+			if (TARGET_UMUTEX_UNOWNED == owner ||
+			    TARGET_UMUTEX_CONTESTED == owner)
+				unlock_user_struct(target_umutex,
+				    target_addr, 1);
+				return (0);
+		} else {
+			if (tcmpset_32(&target_umutex->m_owner,
+				TARGET_UMUTEX_UNOWNED, id)) {
+				/* The acquired succeeded. */
+				unlock_user_struct(target_umutex,
+				    target_addr, 1);
+				return (0);
+			}
+
+			/*
+			 * If no one owns it but it is contested try to acquire
+			 * it.
+			 */
+			if (TARGET_UMUTEX_CONTESTED == owner) {
+				if (tcmpset_32(&target_umutex->m_owner,
+					TARGET_UMUTEX_CONTESTED,
+					id | TARGET_UMUTEX_CONTESTED)) {
+
+					unlock_user_struct(target_umutex,
+					    target_addr, 1);
+					return (0);
+				}
+
+				/* The lock changed so restart. */
+				unlock_user_struct(target_umutex,
+				    target_addr, 1);
+				continue;
+			}
+		}
+
+		__get_user(flags, &target_umutex->m_flags);
+		flags = tswap32(flags);
+		if ((flags & TARGET_UMUTEX_ERROR_CHECK) != 0 &&
+		    (owner & ~TARGET_UMUTEX_CONTESTED) == id) {
+			unlock_user_struct(target_umutex, target_addr, 1);
+			return (-TARGET_EDEADLK);
+		}
+
+		if (TARGET_UMUTEX_TRY == mode) {
+			unlock_user_struct(target_umutex, target_addr, 1);
+			return (-TARGET_EBUSY);
+		}
+
+		/* Set the contested bit and sleep. */
+		if (!tcmpset_32(&target_umutex->m_owner, owner,
+			owner | TARGET_UMUTEX_CONTESTED)) {
+			unlock_user_struct(target_umutex, target_addr, 1);
+			continue;
+		}
+
+		owner = owner | TARGET_UMUTEX_CONTESTED;
+		unlock_user_struct(target_umutex, target_addr, 1);
+
+		/* Byte swap, if needed, to match what is stored in user mem. */
+		owner = tswap32(owner);
+		ret = get_errno(_umtx_op(target_umutex, UMTX_OP_WAIT_UINT, owner,
+			0, ts));
+		if (ret)
+			return (ret);
+	}
+
+	return (0);
+}
+
+static int
+do_unlock_umutex(abi_ulong target_addr, uint32_t id)
+{
+	struct target_umutex *target_umutex;
+	uint32_t owner;
+
+
+	if (!lock_user_struct(VERIFY_WRITE, target_umutex, target_addr, 0))
+		return (-TARGET_EFAULT);
+
+	/* Make sure we own this mutex. */
+	__get_user(owner, &target_umutex->m_owner);
+	if ((owner & ~TARGET_UMUTEX_CONTESTED) != id) {
+		unlock_user_struct(target_umutex, target_addr, 1);
+		return (-TARGET_EPERM);
+	}
+
+	if ((owner & TARGET_UMUTEX_CONTESTED) == 0)
+		if (tcmpset_32(&target_umutex->m_owner, owner,
+			TARGET_UMTX_UNOWNED)) {
+			unlock_user_struct(target_umutex, target_addr, 1);
+			return (0);
+		}
+
+	/* This is a contested lock. Unlock it. */
+	__put_user(TARGET_UMUTEX_UNOWNED, &target_umutex->m_owner);
+	unlock_user_struct(target_umutex, target_addr, 1);
+
+	/* And wake up all those contesting it. */
+	return ( _umtx_op(g2h(target_addr), UMTX_OP_WAKE, 0, 0, 0));
+}
+
+/*
+ * _cv_mutex is keeps other threads from doing a signal or broadcast until
+ * the thread is actually asleep and ready.  This is a global mutex for all
+ * condition vars so I am sure performance may be a problem if there are lots
+ * of CVs.
+ */
+static struct umutex _cv_mutex = {0,0,{0,0},{0,0,0,0}};
+
+
+/*
+ * wflags CVWAIT_CHECK_UNPARKING, CVWAIT_ABSTIME, CVWAIT_CLOCKID
+ */
+static int
+do_cv_wait(abi_ulong target_ucond_addr, abi_ulong target_umtx_addr,
+    struct timespec *ts, int wflags)
+{
+	long tid;
+	int ret;
+
+	if (! access_ok(VERIFY_WRITE, target_ucond_addr,
+		sizeof(struct target_ucond))) {
+
+		return (-TARGET_EFAULT);
+	}
+
+	/* Check the clock ID if needed. */
+	if ((wflags & TARGET_CVWAIT_CLOCKID) != 0) {
+		struct target_ucond *target_ucond;
+		uint32_t clockid;
+
+		if (!lock_user_struct(VERIFY_WRITE, target_ucond,
+			target_ucond_addr, 0))
+			return (-TARGET_EFAULT);
+		__get_user(clockid, &target_ucond->c_clockid);
+		unlock_user_struct(target_ucond, target_ucond_addr, 1);
+		if (clockid < CLOCK_REALTIME ||
+		    clockid >= CLOCK_THREAD_CPUTIME_ID) {
+			/* Only HW clock id will work. */
+			return (-TARGET_EINVAL);
+		}
+	}
+
+	thr_self(&tid);
+
+	/* Lock the _cv_mutex so we can safely unlock the user mutex */
+	_umtx_op(&_cv_mutex, UMTX_OP_MUTEX_LOCK, 0, NULL, NULL);
+
+	/* unlock the user mutex */
+	ret = do_unlock_umutex(target_umtx_addr, tid);
+	if (ret) {
+		_umtx_op(&_cv_mutex, UMTX_OP_MUTEX_UNLOCK, 0, NULL, NULL);
+		return (ret);
+	}
+
+	/* UMTX_OP_CV_WAIT unlocks _cv_mutex */
+	ret = get_errno(_umtx_op(g2h(target_ucond_addr), UMTX_OP_CV_WAIT,
+		wflags, &_cv_mutex, ts));
+
+	return (ret);
+}
+
+static int
+do_cv_signal(abi_ulong target_ucond_addr)
+{
+	int ret;
+
+	if (! access_ok(VERIFY_WRITE, target_ucond_addr,
+		sizeof(struct target_ucond)))
+		return (-TARGET_EFAULT);
+
+	/* Lock the _cv_mutex to prevent a race in do_cv_wait(). */
+	_umtx_op(&_cv_mutex, UMTX_OP_MUTEX_LOCK, 0, NULL, NULL);
+	ret = get_errno(_umtx_op(g2h(target_ucond_addr), UMTX_OP_CV_SIGNAL, 0,
+		NULL, NULL));
+	_umtx_op(&_cv_mutex, UMTX_OP_MUTEX_UNLOCK, 0, NULL, NULL);
+
+	return (ret);
+}
+
+static int
+do_cv_broadcast(abi_ulong target_ucond_addr)
+{
+	int ret;
+
+	if (! access_ok(VERIFY_WRITE, target_ucond_addr,
+		sizeof(struct target_ucond)))
+		return (-TARGET_EFAULT);
+
+	/* Lock the _cv_mutex to prevent a race in do_cv_wait(). */
+	_umtx_op(&_cv_mutex, UMTX_OP_MUTEX_LOCK, 0, NULL, NULL);
+	ret = get_errno(_umtx_op(g2h(target_ucond_addr), UMTX_OP_CV_BROADCAST,
+		0, NULL, NULL));
+	_umtx_op(&_cv_mutex, UMTX_OP_MUTEX_UNLOCK, 0, NULL, NULL);
+
+	return (ret);
+}
+
+static int
+do_umtx_op_wait(abi_ulong target_addr, abi_ulong id, struct timespec *ts)
+{
+
+	/* We want to check the user memory but not lock it.  We might sleep. */
+	if (! access_ok(VERIFY_READ, target_addr, sizeof(abi_ulong)))
+		return (-TARGET_EFAULT);
+
+	/* id has already been byte swapped to match what may be in user mem. */
+#ifdef TARGET_ABI32
+	return (get_errno(_umtx_op(g2h(target_addr), UMTX_OP_WAIT_UINT, id, NULL,
+		    ts)));
+#else
+	return (get_errno(_umtx_op(g2h(target_addr), UMTX_OP_WAIT, id, NULL,
+		    ts)));
+#endif
+}
+
+static int
+do_umtx_op_wake(abi_ulong target_addr, abi_ulong n_wake)
+{
+
+	return (get_errno(_umtx_op(g2h(target_addr), UMTX_OP_WAKE, n_wake, NULL,
+		    0)));
+}
+
+static int
+do_rw_rdlock(abi_ulong target_addr, long fflag, struct timespec *ts)
+{
+	struct target_urwlock *target_urwlock;
+	uint32_t flags, wrflags;
+	uint32_t state;
+	uint32_t blocked_readers;
+	int ret;
+
+	if (!lock_user_struct(VERIFY_WRITE, target_urwlock, target_addr, 0))
+		return (-TARGET_EFAULT);
+
+	__get_user(flags, &target_urwlock->rw_flags);
+	wrflags = TARGET_URWLOCK_WRITE_OWNER;
+	if (!(fflag & TARGET_URWLOCK_PREFER_READER) &&
+	    !(flags & TARGET_URWLOCK_PREFER_READER))
+		wrflags |= TARGET_URWLOCK_WRITE_WAITERS;
+
+	for (;;) {
+		__get_user(state, &target_urwlock->rw_state);
+		/* try to lock it */
+		while (!(state & wrflags)) {
+			if (TARGET_URWLOCK_READER_COUNT(state) ==
+			    TARGET_URWLOCK_MAX_READERS) {
+				unlock_user_struct(target_urwlock,
+				    target_addr, 1);
+				return (-TARGET_EAGAIN);
+			}
+			if (tcmpset_32(&target_urwlock->rw_state, state,
+				(state + 1))) {
+				/* The acquired succeeded. */
+				unlock_user_struct(target_urwlock,
+				    target_addr, 1);
+				return (0);
+			}
+			__get_user(state, &target_urwlock->rw_state);
+		}
+
+		/* set read contention bit */
+		if (! tcmpset_32(&target_urwlock->rw_state, state,
+			state | TARGET_URWLOCK_READ_WAITERS)) {
+			/* The state has changed.  Start over. */
+			continue;
+		}
+
+		/* contention bit is set, increase read waiter count */
+		__get_user(blocked_readers, &target_urwlock->rw_blocked_readers);
+		while (! tcmpset_32(&target_urwlock->rw_blocked_readers,
+			blocked_readers, blocked_readers + 1)) {
+			__get_user(blocked_readers,
+			    &target_urwlock->rw_blocked_readers);
+		}
+
+		while (state & wrflags) {
+			/* sleep/wait */
+			unlock_user_struct(target_urwlock, target_addr, 1);
+			ret = get_errno(_umtx_op(
+				&target_urwlock->rw_blocked_readers,
+				UMTX_OP_WAIT_UINT, blocked_readers, 0, ts));
+			if (ret)
+				return (ret);
+			if (!lock_user_struct(VERIFY_WRITE, target_urwlock,
+				target_addr, 0))
+				return (-TARGET_EFAULT);
+			__get_user(state, &target_urwlock->rw_state);
+		}
+
+		/* decrease read waiter count */
+		__get_user(blocked_readers, &target_urwlock->rw_blocked_readers);
+		while (! tcmpset_32(&target_urwlock->rw_blocked_readers,
+			blocked_readers, (blocked_readers - 1))) {
+			__get_user(blocked_readers,
+			    &target_urwlock->rw_blocked_readers);
+		}
+		if (1 == blocked_readers) {
+			/* clear read contention bit */
+			__get_user(state, &target_urwlock->rw_state);
+			while(! tcmpset_32(&target_urwlock->rw_state, state,
+				state & ~TARGET_URWLOCK_READ_WAITERS)) {
+				__get_user(state, &target_urwlock->rw_state);
+			}
+		}
+	}
+}
+
+static int
+do_rw_wrlock(abi_ulong target_addr, long fflag, struct timespec *ts)
+{
+	struct target_urwlock *target_urwlock;
+	uint32_t blocked_readers, blocked_writers;
+	uint32_t state;
+	int ret;
+
+	if (!lock_user_struct(VERIFY_WRITE, target_urwlock, target_addr, 0))
+		return (-TARGET_EFAULT);
+
+	blocked_readers = 0;
+	for (;;) {
+		__get_user(state, &target_urwlock->rw_state);
+		while (!(state & TARGET_URWLOCK_WRITE_OWNER) &&
+		    TARGET_URWLOCK_READER_COUNT(state) == 0) {
+			if (tcmpset_32(&target_urwlock->rw_state, state,
+				state | TARGET_URWLOCK_WRITE_OWNER)) {
+				unlock_user_struct(target_urwlock,
+				    target_addr, 1);
+				return (0);
+			}
+			__get_user(state, &target_urwlock->rw_state);
+		}
+
+		if (!(state & (TARGET_URWLOCK_WRITE_OWNER |
+			    TARGET_URWLOCK_WRITE_WAITERS)) &&
+		    blocked_readers != 0) {
+			ret = get_errno(_umtx_op(
+				&target_urwlock->rw_blocked_readers,
+				UMTX_OP_WAKE, INT_MAX, NULL, NULL));
+			return (ret);
+		}
+
+		/* re-read the state */
+		__get_user(state, &target_urwlock->rw_state);
+
+		/* and set TARGET_URWLOCK_WRITE_WAITERS */
+		while (((state & TARGET_URWLOCK_WRITE_OWNER) ||
+			TARGET_URWLOCK_READER_COUNT(state) != 0) &&
+		    (state & TARGET_URWLOCK_WRITE_WAITERS) == 0) {
+			if (tcmpset_32(&target_urwlock->rw_state, state,
+				state | TARGET_URWLOCK_WRITE_WAITERS)) {
+				break;
+			}
+			__get_user(state, &target_urwlock->rw_state);
+		}
+
+		/* contention bit is set, increase write waiter count */
+		__get_user(blocked_writers, &target_urwlock->rw_blocked_writers);
+		while (! tcmpset_32(&target_urwlock->rw_blocked_writers,
+			blocked_writers, blocked_writers + 1)) {
+			__get_user(blocked_writers,
+			    &target_urwlock->rw_blocked_writers);
+		}
+
+		/* sleep */
+		while ((state & TARGET_URWLOCK_WRITE_OWNER) ||
+		    (TARGET_URWLOCK_READER_COUNT(state) != 0)) {
+			unlock_user_struct(target_urwlock, target_addr, 1);
+			ret = get_errno(_umtx_op(
+				&target_urwlock->rw_blocked_writers,
+				UMTX_OP_WAIT_UINT, blocked_writers, 0, ts));
+			if (ret)
+				return (ret);
+			if (!lock_user_struct(VERIFY_WRITE, target_urwlock,
+				target_addr, 0))
+				return (-TARGET_EFAULT);
+			__get_user(state, &target_urwlock->rw_state);
+		}
+
+		/* decrease the write waiter count */
+		__get_user(blocked_writers, &target_urwlock->rw_blocked_writers);
+		while (! tcmpset_32(&target_urwlock->rw_blocked_writers,
+			blocked_writers, (blocked_writers - 1))) {
+			__get_user(blocked_writers,
+			    &target_urwlock->rw_blocked_writers);
+		}
+		if (1 == blocked_writers) {
+			/* clear write contention bit */
+			__get_user(state, &target_urwlock->rw_state);
+			while(! tcmpset_32(&target_urwlock->rw_state, state,
+				state & ~TARGET_URWLOCK_WRITE_WAITERS)) {
+				__get_user(state, &target_urwlock->rw_state);
+			}
+			__get_user(blocked_readers,
+			    &target_urwlock->rw_blocked_readers);
+		} else
+			blocked_readers = 0;
+	}
+}
+
+static int
+do_rw_unlock(abi_ulong target_addr)
+{
+	struct target_urwlock *target_urwlock;
+	uint32_t flags, state, count;
+	void *q = NULL;
+
+	if (!lock_user_struct(VERIFY_WRITE, target_urwlock, target_addr, 0))
+		return (-TARGET_EFAULT);
+
+	__get_user(flags, &target_urwlock->rw_flags);
+	__get_user(state, &target_urwlock->rw_state);
+
+	if (state & TARGET_URWLOCK_WRITE_OWNER) {
+		for (;;) {
+			if (! tcmpset_32(&target_urwlock->rw_state, state,
+				state & ~TARGET_URWLOCK_WRITE_OWNER)) {
+				__get_user(state, &target_urwlock->rw_state);
+				if (!(state & TARGET_URWLOCK_WRITE_OWNER)) {
+					unlock_user_struct(target_urwlock,
+					    target_addr, 1);
+					return (-TARGET_EPERM);
+				}
+			} else
+				break;
+		}
+	} else if (TARGET_URWLOCK_READER_COUNT(state) != 0) {
+		/* decrement reader count */
+		for (;;) {
+			if (! tcmpset_32(&target_urwlock->rw_state,
+				state, (state  - 1))) {
+				if (TARGET_URWLOCK_READER_COUNT(state) == 0) {
+					unlock_user_struct(target_urwlock,
+						target_addr, 1);
+					    return (-TARGET_EPERM);
+				 }
+			} else
+				break;
+		}
+	} else {
+		unlock_user_struct(target_urwlock, target_addr, 1);
+		return (-TARGET_EPERM);
+	}
+
+	count = 0;
+
+	if (! (flags & TARGET_URWLOCK_PREFER_READER)) {
+		if (state & TARGET_URWLOCK_WRITE_WAITERS) {
+			count = 1;
+			q = &target_urwlock->rw_blocked_writers;
+		} else if (state & TARGET_URWLOCK_READ_WAITERS) {
+			count = INT_MAX;
+			q = &target_urwlock->rw_blocked_readers;
+		}
+	} else {
+		if (state & TARGET_URWLOCK_READ_WAITERS) {
+			count = INT_MAX;
+			q = &target_urwlock->rw_blocked_readers;
+		} else if (state & TARGET_URWLOCK_WRITE_WAITERS) {
+			count = 1;
+			q = &target_urwlock->rw_blocked_writers;
+		}
+	}
+
+	unlock_user_struct(target_urwlock, target_addr, 1);
+	if (q != NULL)
+		return (get_errno(_umtx_op(q, UMTX_OP_WAKE, count, NULL, NULL)));
+	else
+		return (0);
+}
 
 /* do_syscall() should always have a single exit point at the end so
    that actions, such as logging of syscall results, can be performed.
@@ -4679,7 +5250,7 @@ do_stat:
 		 long tid;
 
 		 thr_self(&tid);
-		 ret = do_umtx_lock(arg1, tswap32(tid));
+		 ret = do_lock_umtx(arg1, tid, NULL);
 	 }
 	 break;
 
@@ -4688,72 +5259,238 @@ do_stat:
 		 long tid;
 
 		 thr_self(&tid);
-		 ret = do_umtx_unlock(arg1, tswap32(tid));
+		 ret = do_unlock_umtx(arg1, tid);
 	 }
 	 break;
 
     case TARGET_FREEBSD_NR__umtx_op:
 	 {
 		 struct timespec ts;
-		 void *object = NULL;
-		 int operation;
-		 void *addr = NULL;
-		 void *addr2 = NULL;
-
+		 long tid;
 
 		 /* int _umtx_op(void *obj, int op, u_long val,
-		  * void *uaddr, void *uaddr2); */
+		  * void *uaddr, void *target_ts); */
 
 		 abi_ulong obj = arg1;
 		 int op = (int)arg2;
 		 u_long val = arg3;
-		 /* abi_ulong uaddr = arg4; */
-		 abi_ulong uaddr2 = arg5;
+		 abi_ulong uaddr = arg4;
+		 abi_ulong target_ts = arg5;
 
 		 switch(op) {
 		 case TARGET_UMTX_OP_LOCK:
-			 ret = do_umtx_lock(obj, tswap32((uint32_t)val));
+			 thr_self(&tid);
+			 if (target_ts) {
+				 if (target_to_host_timespec(&ts, target_ts))
+					 goto efault;
+				 ret = do_lock_umtx(obj, tid, &ts);
+			 } else
+				 ret = do_lock_umtx(obj, tid, NULL);
 			 break;
 
 		 case TARGET_UMTX_OP_UNLOCK:
-			 ret = do_umtx_unlock(obj, tswap32((uint32_t)val));
+			 thr_self(&tid);
+			 ret = do_unlock_umtx(obj, tid);
 			 break;
 
 		 case TARGET_UMTX_OP_WAIT:
-			 if (uaddr2) {
-				 if (target_to_host_timespec(&ts, uaddr2))
+			 /* args: obj *, val, ts * */
+			if (target_ts) {
+				 if (target_to_host_timespec(&ts, target_ts))
 					 goto efault;
-				 addr2 = (void *)&ts;
-			 }
-			ret = get_errno(_umtx_op(g2h(obj), UMTX_OP_WAIT,
-				tswap32(val), addr, addr2));
-			break;
+				 ret = do_umtx_op_wait(obj, tswapal(val), &ts);
+			 } else
+				 ret = do_umtx_op_wait(obj, tswapal(val), NULL);
+			 break;
 
 		 case TARGET_UMTX_OP_WAKE:
-			 operation = UMTX_OP_WAKE;
-			 object = g2h(obj);
-			 ret = get_errno(_umtx_op(g2h(obj), UMTX_OP_WAKE,
-				 val, 0, 0));
+			/* args: obj *, nr_wakeup */ 
+			 ret = do_umtx_op_wake(obj, val);
+			 break;
+
+		 case TARGET_UMTX_OP_MUTEX_LOCK:
+			 thr_self(&tid);
+			 if (target_ts) {
+				 if (target_to_host_timespec(&ts, target_ts))
+					 goto efault;
+				 ret = do_lock_umutex(obj, tid, &ts, 0);
+			 } else {
+				 ret = do_lock_umutex(obj, tid, NULL, 0);
+			 }
+			 break;
+
+		 case TARGET_UMTX_OP_MUTEX_UNLOCK:
+			 thr_self(&tid);
+			 ret = do_unlock_umutex(obj, tid);
 			 break;
 
 		 case TARGET_UMTX_OP_MUTEX_TRYLOCK:
-		 case TARGET_UMTX_OP_MUTEX_LOCK:
-		 case TARGET_UMTX_OP_MUTEX_UNLOCK:
-		 case TARGET_UMTX_OP_SET_CEILING:
-		 case TARGET_UMTX_OP_CV_WAIT:
-		 case TARGET_UMTX_OP_CV_SIGNAL:
-		 case TARGET_UMTX_OP_CV_BROADCAST:
-		 case TARGET_UMTX_OP_WAIT_UINT:
-		 case TARGET_UMTX_OP_RW_RDLOCK:
-		 case TARGET_UMTX_OP_RW_WRLOCK:
-		 case TARGET_UMTX_OP_RW_UNLOCK:
-		 case TARGET_UMTX_OP_WAIT_UINT_PRIVATE:
-		 case TARGET_UMTX_OP_WAKE_PRIVATE:
+			 thr_self(&tid);
+			 ret = do_lock_umutex(obj, tid, NULL, TARGET_UMUTEX_TRY);
+			 break;
+
 		 case TARGET_UMTX_OP_MUTEX_WAIT:
+			 thr_self(&tid);
+			 if (target_ts) {
+				 if (target_to_host_timespec(&ts, target_ts))
+					 goto efault;
+				 ret = do_lock_umutex(obj, tid, &ts,
+				     TARGET_UMUTEX_WAIT);
+			 } else {
+				 ret = do_lock_umutex(obj, tid, NULL,
+				     TARGET_UMUTEX_WAIT);
+			 }
+			 break;
+
 		 case TARGET_UMTX_OP_MUTEX_WAKE:
-		 case TARGET_UMTX_OP_SEM_WAIT:
-		 case TARGET_UMTX_OP_SEM_WAKE:
+			 /* Don't need to do access_ok(). */
+			 ret = get_errno(_umtx_op(g2h(obj), UMTX_OP_MUTEX_WAKE,
+				val, NULL, NULL));
+			 break;
+
+		 case TARGET_UMTX_OP_SET_CEILING:
+			 ret = 0; /* XXX quietly ignore these things for now */
+			 break;
+
+		 case TARGET_UMTX_OP_CV_WAIT:
+			 /*
+			  * Initialization of the struct conv is done by
+			  * bzero'ing everything in userland.
+			  */
+			if (target_ts) {
+				if (target_to_host_timespec(&ts, target_ts))
+					goto efault;
+				ret = do_cv_wait(obj, uaddr, &ts, val);
+			} else {
+				ret = do_cv_wait(obj, uaddr, NULL, val);
+			}
+			break;
+
+		 case TARGET_UMTX_OP_CV_SIGNAL:
+			 /*
+			  * XXX
+			  * User code may check if c_has_waiters is zero.  Other
+			  * than that it is assume that user code doesn't do
+			  * much with the struct conv fields and is pretty
+			  * much opauque to userland.
+			  */
+			ret = do_cv_signal(obj);
+			break;
+
+		 case TARGET_UMTX_OP_CV_BROADCAST:
+			 /*
+			  * XXX
+			  * User code may check if c_has_waiters is zero.  Other
+			  * than that it is assume that user code doesn't do
+			  * much with the struct conv fields and is pretty
+			  * much opauque to userland.
+			  */
+			ret = do_cv_broadcast(obj);
+			break;
+
+		 case TARGET_UMTX_OP_WAIT_UINT:
+			if (! access_ok(VERIFY_READ, obj, sizeof(abi_ulong)))
+				goto efault;
+			 if (target_ts) {
+				 if (target_to_host_timespec(&ts, target_ts))
+					 goto efault;
+				 ret = get_errno(_umtx_op(g2h(obj),
+					 UMTX_OP_WAIT_UINT,
+					 tswap32((uint32_t)val), NULL, &ts));
+			 } else
+				 ret = get_errno(_umtx_op(g2h(obj),
+					 UMTX_OP_WAIT_UINT,
+					 tswap32((uint32_t)val), NULL, NULL));
+
+			 break;
+
+		 case TARGET_UMTX_OP_WAIT_UINT_PRIVATE:
+			if (! access_ok(VERIFY_READ, obj, sizeof(abi_ulong)))
+				goto efault;
+			if (target_ts) {
+				if (target_to_host_timespec(&ts, target_ts))
+					goto efault;
+				ret = get_errno(_umtx_op(g2h(obj),
+					UMTX_OP_WAIT_UINT_PRIVATE,
+					tswap32((uint32_t)val), NULL, &ts));
+			} else
+				ret = get_errno(_umtx_op(g2h(obj),
+					UMTX_OP_WAIT_UINT_PRIVATE,
+					tswap32((uint32_t)val), NULL, NULL));
+
+			break;
+
+		 case TARGET_UMTX_OP_WAKE_PRIVATE:
+			 /* Don't need to do access_ok(). */
+			 ret = get_errno(_umtx_op(g2h(obj), UMTX_OP_WAKE_PRIVATE,
+				val, NULL, NULL));
+			break;
+
 		 case TARGET_UMTX_OP_NWAKE_PRIVATE:
+			if (! access_ok(VERIFY_READ, obj,
+				val * sizeof(uint32_t)))
+				goto efault;
+			ret = get_errno(_umtx_op(g2h(obj), UMTX_OP_NWAKE_PRIVATE,
+				val, NULL, NULL));
+			break;
+
+
+		 case TARGET_UMTX_OP_RW_RDLOCK:
+			 if (target_ts) {
+				 if (target_to_host_timespec(&ts, target_ts))
+					 goto efault;
+				 ret = do_rw_rdlock(obj, val, &ts);
+			 } else
+				 ret = do_rw_rdlock(obj, val, NULL);
+			 break;
+
+		 case TARGET_UMTX_OP_RW_WRLOCK:
+			 if (target_ts) {
+				 if (target_to_host_timespec(&ts, target_ts))
+					 goto efault;
+				 ret = do_rw_wrlock(obj, val, &ts);
+			 } else
+				 ret = do_rw_wrlock(obj, val, NULL);
+			 break;
+
+		 case TARGET_UMTX_OP_RW_UNLOCK:
+			 ret = do_rw_unlock(obj);
+			 break;
+
+#ifdef	UMTX_OP_MUTEX_WAKE2
+		 case TARGET_UMTX_OP_MUTEX_WAKE2:
+			if (! access_ok(VERIFY_WRITE, obj,
+				sizeof(struct target_ucond))) {
+				goto efault;
+			}
+			ret = get_errno(_umtx_op(g2h(obj),
+				UMTX_OP_MUTEX_WAKE2, val, NULL, NULL));
+			break;
+#endif
+
+		 case TARGET_UMTX_OP_SEM_WAIT:
+			/* XXX Assumes struct _usem is opauque to the user */
+			if (! access_ok(VERIFY_WRITE, obj,
+				sizeof(struct target__usem))) {
+				goto efault;
+			}
+			if (target_ts) {
+				if (target_to_host_timespec(&ts, target_ts))
+					goto efault;
+				ret = get_errno(_umtx_op(g2h(obj),
+					UMTX_OP_SEM_WAIT, 0, NULL, &ts));
+			} else {
+				ret = get_errno(_umtx_op(g2h(obj),
+					UMTX_OP_SEM_WAIT, 0, NULL, NULL));
+			}
+			break;
+
+		 case TARGET_UMTX_OP_SEM_WAKE:
+			 /* Don't need to do access_ok(). */
+			 ret = get_errno(_umtx_op(g2h(obj), UMTX_OP_SEM_WAKE,
+				val, NULL, NULL));
+			break;
+
 		 default:
 			 ret = -TARGET_EINVAL;
 			 break;

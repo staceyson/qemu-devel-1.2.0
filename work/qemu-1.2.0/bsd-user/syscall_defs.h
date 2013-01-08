@@ -555,7 +555,7 @@ struct target_rtprio {
  */
 
 struct target_umtx {
-	uint32_t	u_owner;	/* Owner of the mutex. */
+	abi_ulong	u_owner;	/* Owner of the mutex. */
 };
 
 struct target_umutex {
@@ -573,7 +573,7 @@ struct target_ucond {
 };
 
 struct target_urwlock {
-	int32_t		rw_state;
+	uint32_t	rw_state;
 	uint32_t	rw_flags;
 	uint32_t	rw_blocked_readers;
 	uint32_t	rw_blocked_writers;
@@ -613,7 +613,31 @@ struct target__usem {
 #define	TARGET_UMTX_OP_SEM_WAIT			19
 #define	TARGET_UMTX_OP_SEM_WAKE			20
 #define	TARGET_UMTX_OP_NWAKE_PRIVATE		21
-#define	TARGET_UMTX_OP_MAX			22
+#define	TARGET_UMTX_OP_MUTEX_WAKE2		22
+#define	TARGET_UMTX_OP_MAX			23
 
 /* flags for UMTX_OP_CV_WAIT */
-#define	TARGET_CHECK_UNPARKING			0x01
+#define	TARGET_CVWAIT_CHECK_UNPARKING		0x01
+#define	TARGET_CVWAIT_ABSTIME			0x02
+#define	TARGET_CVWAIT_CLOCKID			0x04
+
+#define	TARGET_UMTX_UNOWNED			0x0
+#define	TARGET_UMUTEX_UNOWNED			0x0
+#define	TARGET_UMTX_CONTESTED			(abi_long)(0x8000000000000000)
+#define	TARGET_UMUTEX_CONTESTED			0x80000000U
+
+/* flags for umutex */
+#define	TARGET_UMUTEX_ERROR_CHECK	0x0002	/* Error-checking mutex */
+#define	TARGET_UMUTEX_PRIO_INHERIT	0x0004	/* Priority inherited mutex */
+#define	TARGET_UMUTEX_PRIO_PROTECT	0x0008	/* Priority protect mutex */
+
+#define	TARGET_UMUTEX_TRY			1
+#define	TARGET_UMUTEX_WAIT			2
+
+/* urwlock flags */
+#define	TARGET_URWLOCK_PREFER_READER	0x0002
+#define	TARGET_URWLOCK_WRITE_OWNER	0x80000000U
+#define	TARGET_URWLOCK_WRITE_WAITERS	0x40000000U
+#define	TARGET_URWLOCK_READ_WAITERS	0x20000000U
+#define	TARGET_URWLOCK_MAX_READERS	0x1fffffffU
+#define	TARGET_URWLOCK_READER_COUNT(c)	((c) & TARGET_URWLOCK_MAX_READERS)
