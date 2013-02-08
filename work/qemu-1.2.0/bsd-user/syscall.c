@@ -3090,6 +3090,285 @@ do_rw_unlock(abi_ulong target_addr)
 		return (0);
 }
 
+static inline abi_long
+target_to_host_statfs(struct statfs *host_statfs, abi_ulong target_addr)
+{
+	struct target_statfs *target_statfs;
+
+	if (!lock_user_struct(VERIFY_READ, target_statfs, target_addr, 1))
+		return (-TARGET_EFAULT);
+	__get_user(host_statfs->f_version, &target_statfs->f_version);
+	__get_user(host_statfs->f_type, &target_statfs->f_type);
+	__get_user(host_statfs->f_flags, &target_statfs->f_flags);
+	__get_user(host_statfs->f_bsize, &target_statfs->f_bsize);
+	__get_user(host_statfs->f_iosize, &target_statfs->f_iosize);
+	__get_user(host_statfs->f_blocks, &target_statfs->f_blocks);
+	__get_user(host_statfs->f_bfree, &target_statfs->f_bfree);
+	__get_user(host_statfs->f_bavail, &target_statfs->f_bavail);
+	__get_user(host_statfs->f_files, &target_statfs->f_files);
+	__get_user(host_statfs->f_ffree, &target_statfs->f_ffree);
+	__get_user(host_statfs->f_syncwrites, &target_statfs->f_syncwrites);
+	__get_user(host_statfs->f_asyncwrites, &target_statfs->f_asyncwrites);
+	__get_user(host_statfs->f_syncreads, &target_statfs->f_syncreads);
+	__get_user(host_statfs->f_asyncreads, &target_statfs->f_asyncreads);
+	/* uint64_t f_spare[10]; */
+	__get_user(host_statfs->f_namemax, &target_statfs->f_namemax);
+	__get_user(host_statfs->f_owner, &target_statfs->f_owner);
+	__get_user(host_statfs->f_fsid.val[0], &target_statfs->f_fsid.val[0]);
+	__get_user(host_statfs->f_fsid.val[1], &target_statfs->f_fsid.val[1]);
+	/* char f_charspace[80]; */
+	strncpy(host_statfs->f_fstypename, &target_statfs->f_fstypename[0],
+	    TARGET_MFSNAMELEN);
+	strncpy(host_statfs->f_mntfromname, &target_statfs->f_mntfromname[0],
+	    TARGET_MNAMELEN);
+	strncpy(host_statfs->f_mntonname, &target_statfs->f_mntonname[0],
+	    TARGET_MNAMELEN);
+	unlock_user_struct(target_statfs, target_addr, 0);
+	return (0);
+}
+
+static inline abi_long
+host_to_target_statfs(abi_ulong target_addr, struct statfs *host_statfs)
+{
+	struct target_statfs *target_statfs;
+
+	if (!lock_user_struct(VERIFY_WRITE, target_statfs, target_addr, 0))
+		return (-TARGET_EFAULT);
+	__put_user(host_statfs->f_version, &target_statfs->f_version);
+	__put_user(host_statfs->f_type, &target_statfs->f_type);
+	__put_user(host_statfs->f_flags, &target_statfs->f_flags);
+	__put_user(host_statfs->f_bsize, &target_statfs->f_bsize);
+	__put_user(host_statfs->f_iosize, &target_statfs->f_iosize);
+	__put_user(host_statfs->f_blocks, &target_statfs->f_blocks);
+	__put_user(host_statfs->f_bfree, &target_statfs->f_bfree);
+	__put_user(host_statfs->f_bavail, &target_statfs->f_bavail);
+	__put_user(host_statfs->f_files, &target_statfs->f_files);
+	__put_user(host_statfs->f_ffree, &target_statfs->f_ffree);
+	__put_user(host_statfs->f_syncwrites, &target_statfs->f_syncwrites);
+	__put_user(host_statfs->f_asyncwrites, &target_statfs->f_asyncwrites);
+	__put_user(host_statfs->f_syncreads, &target_statfs->f_syncreads);
+	__put_user(host_statfs->f_asyncreads, &target_statfs->f_asyncreads);
+	/* uint64_t f_spare[10]; */
+	__put_user(host_statfs->f_namemax, &target_statfs->f_namemax);
+	__put_user(host_statfs->f_owner, &target_statfs->f_owner);
+	__put_user(host_statfs->f_fsid.val[0], &target_statfs->f_fsid.val[0]);
+	__put_user(host_statfs->f_fsid.val[1], &target_statfs->f_fsid.val[1]);
+	/* char f_charspace[80]; */
+	strncpy(&target_statfs->f_fstypename[0], host_statfs->f_fstypename,
+	    TARGET_MFSNAMELEN);
+	strncpy(&target_statfs->f_mntfromname[0], host_statfs->f_mntfromname,
+	    TARGET_MNAMELEN);
+	strncpy(&target_statfs->f_mntonname[0], host_statfs->f_mntonname,
+	    TARGET_MNAMELEN);
+	unlock_user_struct(target_statfs, target_addr, 1);
+	return (0);
+}
+
+static inline abi_long
+target_to_host_fhandle(fhandle_t *host_fh, abi_ulong target_addr)
+{
+	target_fhandle_t *target_fh;
+
+	if (!lock_user_struct(VERIFY_READ, target_fh, target_addr, 1))
+		return (-TARGET_EFAULT);
+	__get_user(host_fh->fh_fsid.val[0], &target_fh->fh_fsid.val[0]);
+	__get_user(host_fh->fh_fsid.val[1], &target_fh->fh_fsid.val[0]);
+
+	__get_user(host_fh->fh_fid.fid_len, &target_fh->fh_fid.fid_len);
+	/* u_short         fid_data0; */
+	memcpy(host_fh->fh_fid.fid_data, target_fh->fh_fid.fid_data,
+	    TARGET_MAXFIDSZ);
+	unlock_user_struct(target_fh, target_addr, 0);
+	return (0);
+}
+
+static inline abi_long
+host_to_target_fhandle(abi_ulong target_addr, fhandle_t *host_fh)
+{
+	target_fhandle_t *target_fh;
+
+	if (!lock_user_struct(VERIFY_WRITE, target_fh, target_addr, 0))
+		return (-TARGET_EFAULT);
+	__put_user(host_fh->fh_fsid.val[0], &target_fh->fh_fsid.val[0]);
+	__put_user(host_fh->fh_fsid.val[1], &target_fh->fh_fsid.val[0]);
+
+	__put_user(host_fh->fh_fid.fid_len, &target_fh->fh_fid.fid_len);
+	/* u_short         fid_data0; */
+	memcpy(target_fh->fh_fid.fid_data, host_fh->fh_fid.fid_data,
+	    TARGET_MAXFIDSZ);
+	unlock_user_struct(target_fh, target_addr, 1);
+	return (0);
+}
+
+static inline abi_long
+host_to_target_stat(abi_ulong target_addr, struct stat *host_st)
+{
+	struct target_freebsd_stat *target_st;
+
+	if (!lock_user_struct(VERIFY_WRITE, target_st, target_addr, 0))
+		return (-TARGET_EFAULT);
+	memset(target_st, 0, sizeof(*target_st));
+	__put_user(host_st->st_dev, &target_st->st_dev);
+	__put_user(host_st->st_ino, &target_st->st_ino);
+	__put_user(host_st->st_mode, &target_st->st_mode);
+	__put_user(host_st->st_nlink, &target_st->st_nlink);
+	__put_user(host_st->st_uid, &target_st->st_uid);
+	__put_user(host_st->st_gid, &target_st->st_gid);
+	__put_user(host_st->st_rdev, &target_st->st_rdev);
+	__put_user(host_st->st_atim.tv_sec, &target_st->st_atim.tv_sec);
+	__put_user(host_st->st_atim.tv_nsec, &target_st->st_atim.tv_nsec);
+	__put_user(host_st->st_mtim.tv_sec, &target_st->st_mtim.tv_sec);
+	__put_user(host_st->st_mtim.tv_nsec, &target_st->st_mtim.tv_nsec);
+	__put_user(host_st->st_ctim.tv_sec, &target_st->st_ctim.tv_sec);
+	__put_user(host_st->st_ctim.tv_nsec, &target_st->st_ctim.tv_nsec);
+	__put_user(host_st->st_size, &target_st->st_size);
+	__put_user(host_st->st_blocks, &target_st->st_blocks);
+	__put_user(host_st->st_blksize, &target_st->st_blksize);
+	__put_user(host_st->st_flags, &target_st->st_flags);
+	__put_user(host_st->st_gen, &target_st->st_gen);
+	/* st_lspare not used */
+	__put_user(host_st->st_birthtim.tv_sec, &target_st->st_birthtim.tv_sec);
+	__put_user(host_st->st_birthtim.tv_nsec,
+	    &target_st->st_birthtim.tv_nsec);
+	unlock_user_struct(target_st, target_addr, 1);
+
+	return (0);
+}
+
+static inline abi_long
+do_getfh(const char *path, abi_ulong target_addr)
+{
+	abi_long ret;
+	fhandle_t host_fh;
+
+	ret = get_errno(getfh(path, &host_fh));
+	if (ret)
+		return (ret);
+
+	return (host_to_target_fhandle(target_addr, &host_fh));
+}
+
+static inline abi_long
+do_lgetfh(const char *path, abi_ulong target_addr)
+{
+	abi_long ret;
+	fhandle_t host_fh;
+
+	ret = get_errno(lgetfh(path, &host_fh));
+	if (ret)
+		return (ret);
+
+	return (host_to_target_fhandle(target_addr, &host_fh));
+}
+
+static inline abi_long
+do_fhopen(abi_ulong target_addr, int flags)
+{
+	abi_long ret;
+	fhandle_t host_fh;
+
+	ret = target_to_host_fhandle(&host_fh, target_addr);
+	if (ret)
+		return (ret);
+
+	return (get_errno(fhopen(&host_fh, flags)));
+}
+
+static inline abi_long
+do_fhstat(abi_ulong target_fhp_addr, abi_ulong target_sb_addr)
+{
+	abi_long ret;
+	fhandle_t host_fh;
+	struct stat host_sb;
+
+	ret = target_to_host_fhandle(&host_fh, target_fhp_addr);
+	if (ret)
+		return (ret);
+
+	ret = get_errno(fhstat(&host_fh, &host_sb));
+	if (ret)
+		return (ret);
+
+	return (host_to_target_stat(target_sb_addr, &host_sb));
+}
+
+static inline abi_long
+do_fhstatfs(abi_ulong target_fhp_addr, abi_ulong target_stfs_addr)
+{
+	abi_long ret;
+	fhandle_t host_fh;
+	struct statfs host_stfs;
+
+	ret = target_to_host_fhandle(&host_fh, target_fhp_addr);
+	if (ret)
+		return (ret);
+
+	ret = get_errno(fhstatfs(&host_fh, &host_stfs));
+	if (ret)
+		return (ret);
+
+	return (host_to_target_statfs(target_stfs_addr, &host_stfs));
+}
+
+static inline abi_long
+do_statfs(const char *path, abi_ulong target_addr)
+{
+	abi_long ret;
+	struct statfs host_stfs;
+
+	ret = get_errno(statfs(path, &host_stfs));
+	if (ret)
+		return (ret);
+
+	return (host_to_target_statfs(target_addr, &host_stfs));
+}
+
+static inline abi_long
+do_fstatfs(int fd, abi_ulong target_addr)
+{
+	abi_long ret;
+	struct statfs host_stfs;
+
+	ret = get_errno(fstatfs(fd, &host_stfs));
+	if (ret)
+		return (ret);
+
+	return (host_to_target_statfs(target_addr, &host_stfs));
+}
+
+static inline abi_long
+do_getfsstat(abi_ulong target_addr, abi_long bufsize, int flags)
+{
+	abi_long ret;
+	struct statfs *host_stfs;
+	int count;
+	long host_bufsize;
+
+	count = bufsize / sizeof(struct target_statfs);
+
+	/* if user buffer is NULL then return number of mounted FS's */
+	if (0 == target_addr || 0 == count)
+		return (get_errno(getfsstat(NULL, 0, flags)));
+
+	/* XXX check count to be reasonable */
+	host_bufsize = sizeof(struct statfs) * count;
+	host_stfs = alloca(host_bufsize);
+	if (! host_stfs)
+		return (-TARGET_EINVAL);
+
+	ret = count = get_errno(getfsstat(host_stfs, host_bufsize, flags));
+	if (ret < 0)
+		return (ret);
+
+	while (count--)
+		if (host_to_target_statfs(
+			(target_addr + (count * sizeof(struct target_statfs))),
+			&host_stfs[count]))
+			return (-TARGET_EFAULT);
+
+	return (ret);
+}
+
 /* do_syscall() should always have a single exit point at the end so
    that actions, such as logging of syscall results, can be performed.
    All errnos that do_syscall() returns must be -TARGET_<errcode>. */
@@ -3100,7 +3379,6 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 {
     abi_long ret;
     void *p;
-    struct stat st;
 
 #ifdef DEBUG
     gemu_log("freebsd syscall %d\n", num);
@@ -3298,18 +3576,30 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
         break;
 
     case TARGET_FREEBSD_NR_stat:
-	 if (!(p = lock_user_string(arg1)))
-            goto efault;
-        ret = get_errno(stat(path(p), &st));
-        unlock_user(p, arg1, 0);
-        goto do_stat;
+	{
+	    struct stat st;
+
+	    if (!(p = lock_user_string(arg1)))
+		    goto efault;
+	    ret = get_errno(stat(path(p), &st));
+	    unlock_user(p, arg1, 0);
+	    if (0 == ret)
+		    ret = host_to_target_stat(arg2, &st);
+	}
+	break;
 
     case TARGET_FREEBSD_NR_lstat:
-        if (!(p = lock_user_string(arg1)))
-            goto efault;
-        ret = get_errno(lstat(path(p), &st));
-        unlock_user(p, arg1, 0);
-        goto do_stat;
+	{
+	    struct stat st;
+
+	    if (!(p = lock_user_string(arg1)))
+		    goto efault;
+	    ret = get_errno(lstat(path(p), &st));
+	    unlock_user(p, arg1, 0);
+	    if (0 == ret)
+		    ret = host_to_target_stat(arg2, &st);
+	}
+	break;
 
     case TARGET_FREEBSD_NR_nstat:
     case TARGET_FREEBSD_NR_nfstat:
@@ -3319,41 +3609,10 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 
     case TARGET_FREEBSD_NR_fstat:
         {
+	    struct stat st;
             ret = get_errno(fstat(arg1, &st));
-
-do_stat:
-	if (!is_error(ret)) {
-		struct target_freebsd_stat *target_st;
-		
-		if (!lock_user_struct(VERIFY_WRITE, target_st, arg2, 0))
-                    goto efault;
-                memset(target_st, 0, sizeof(*target_st));
-                __put_user(st.st_dev, &target_st->st_dev);
-                __put_user(st.st_ino, &target_st->st_ino);
-                __put_user(st.st_mode, &target_st->st_mode);
-                __put_user(st.st_nlink, &target_st->st_nlink);
-                __put_user(st.st_uid, &target_st->st_uid);
-                __put_user(st.st_gid, &target_st->st_gid);
-                __put_user(st.st_rdev, &target_st->st_rdev);
-                __put_user(st.st_atim.tv_sec, &target_st->st_atim.tv_sec);
-		__put_user(st.st_atim.tv_nsec, &target_st->st_atim.tv_nsec);
-                __put_user(st.st_mtim.tv_sec, &target_st->st_mtim.tv_sec);
-		__put_user(st.st_mtim.tv_nsec, &target_st->st_mtim.tv_nsec);
-                __put_user(st.st_ctim.tv_sec, &target_st->st_ctim.tv_sec);
-		__put_user(st.st_ctim.tv_nsec, &target_st->st_ctim.tv_nsec);
-                __put_user(st.st_size, &target_st->st_size);
-                __put_user(st.st_blocks, &target_st->st_blocks);
-                __put_user(st.st_blksize, &target_st->st_blksize);
-		__put_user(st.st_flags, &target_st->st_flags);
-		__put_user(st.st_gen, &target_st->st_gen);
-		/* st_lspare not used */
-		__put_user(st.st_birthtim.tv_sec,
-		    &target_st->st_birthtim.tv_sec);
-		__put_user(st.st_birthtim.tv_nsec,
-		    &target_st->st_birthtim.tv_nsec);
-                unlock_user_struct(target_st, arg2, 1);
-	  }
-
+	    if (! ret)
+		    ret = host_to_target_stat(arg2, &st);
 	}
         break;
 
@@ -5498,6 +5757,47 @@ do_stat:
 	 }
 	 break;
 
+    case TARGET_FREEBSD_NR_getfh:
+        if (!(p = lock_user_string(arg1)))
+            goto efault;
+        ret = do_getfh(path(p), arg2);
+        unlock_user(p, arg1, 0);
+	break;
+
+    case TARGET_FREEBSD_NR_lgetfh:
+        if (!(p = lock_user_string(arg1)))
+            goto efault;
+        ret = do_lgetfh(path(p), arg2);
+        unlock_user(p, arg1, 0);
+	break;
+
+    case TARGET_FREEBSD_NR_fhopen:
+	ret = do_fhopen(arg1, arg2);
+	break;
+
+    case TARGET_FREEBSD_NR_fhstat:
+	ret = do_fhstat(arg1, arg2);
+	break;
+
+    case TARGET_FREEBSD_NR_fhstatfs:
+	ret = do_fhstatfs(arg1, arg2);
+	break;
+
+    case TARGET_FREEBSD_NR_getfsstat:
+	ret = do_getfsstat(arg1, arg2, arg3);
+	break;
+
+    case TARGET_FREEBSD_NR_statfs:
+        if (!(p = lock_user_string(arg1)))
+            goto efault;
+	ret = do_statfs(path(p), arg2);
+        unlock_user(p, arg1, 0);
+	break;
+
+    case TARGET_FREEBSD_NR_fstatfs:
+	ret = do_fstatfs(arg1, arg2);
+	break;
+
     case TARGET_FREEBSD_NR_yield:
     case TARGET_FREEBSD_NR_sched_setparam:
     case TARGET_FREEBSD_NR_sched_getparam:
@@ -5532,15 +5832,6 @@ do_stat:
     case TARGET_FREEBSD_NR_sctp_peeloff:
     case TARGET_FREEBSD_NR_sctp_generic_sendmsg:
     case TARGET_FREEBSD_NR_sctp_generic_recvmsg:
-
-    case TARGET_FREEBSD_NR_getfh:
-    case TARGET_FREEBSD_NR_lgetfh:
-    case TARGET_FREEBSD_NR_fhstatfs:
-    case TARGET_FREEBSD_NR_fhopen:
-    case TARGET_FREEBSD_NR_fhstat:
-
-    case TARGET_FREEBSD_NR_getfsstat:
-    case TARGET_FREEBSD_NR_fstatfs:
 
     case TARGET_FREEBSD_NR_modfnext:
     case TARGET_FREEBSD_NR_modfind:
