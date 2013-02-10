@@ -3904,6 +3904,13 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 	closefrom(arg1);
 	break;
 
+    case TARGET_FREEBSD_NR_revoke:
+        if (!(p = lock_user_string(arg1)))
+            goto efault;
+	ret = get_errno(revoke(p));
+        unlock_user(p, arg1, 0);
+	break;
+
 #ifdef TARGET_FREEBSD_NR_creat
     case TARGET_FREEBSD_NR_creat:
 	if (!(p = lock_user_string(arg1)))
@@ -6307,8 +6314,6 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 #ifdef TARGET_FREEBSD_NR_getpagesize
     case TARGET_FREEBSD_NR_getpagesize:
 #endif
-
-    case TARGET_FREEBSD_NR_revoke:
 
     case TARGET_FREEBSD_NR_profil:
     case TARGET_FREEBSD_NR_ktrace:
