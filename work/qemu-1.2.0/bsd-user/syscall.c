@@ -47,6 +47,7 @@
 #include <sys/thr.h>
 #include <sys/rtprio.h>
 #include <sys/umtx.h>
+#include <sys/uuid.h>
 #include <sys/_termios.h>
 #include <sys/ttycom.h>
 #include <sys/reboot.h>
@@ -3209,6 +3210,25 @@ host_to_target_fhandle(abi_ulong target_addr, fhandle_t *host_fh)
 }
 
 static inline abi_long
+host_to_target_uuid(abi_ulong target_addr, struct uuid *host_uuid)
+{
+	struct target_uuid *target_uuid;
+
+	if (!lock_user_struct(VERIFY_WRITE, target_uuid, target_addr, 0))
+		return (-TARGET_EFAULT);
+	__put_user(host_uuid->time_low, &target_uuid->time_low);
+	__put_user(host_uuid->time_mid, &target_uuid->time_mid);
+	__put_user(host_uuid->time_hi_and_version,
+	    &target_uuid->time_hi_and_version);
+	host_uuid->clock_seq_hi_and_reserved =
+	    target_uuid->clock_seq_hi_and_reserved;
+	host_uuid->clock_seq_low = target_uuid->clock_seq_low;
+	memcpy(host_uuid->node, target_uuid->node, TARGET_UUID_NODE_LEN);
+	unlock_user_struct(target_uuid, target_addr, 1);
+	return (0);
+}
+
+static inline abi_long
 host_to_target_stat(abi_ulong target_addr, struct stat *host_st)
 {
 	struct target_freebsd_stat *target_st;
@@ -3374,6 +3394,36 @@ do_getfsstat(abi_ulong target_addr, abi_long bufsize, int flags)
 			&host_stfs[count]))
 			return (-TARGET_EFAULT);
 
+	return (ret);
+}
+
+static abi_long
+do_uuidgen(abi_ulong target_addr, int count)
+{
+	int i;
+	abi_long ret;
+	struct uuid *host_uuid;
+
+	if (count < 1 || count > 2048)
+		return (-TARGET_EINVAL);
+
+	host_uuid = (struct uuid *)g_malloc(count * sizeof(struct uuid));
+
+	if (NULL == host_uuid)
+		return (-TARGET_EINVAL);
+
+	ret = get_errno(uuidgen(host_uuid, count));
+	if (ret)
+		goto out;
+	for(i = 0; i < count; i++) {
+		ret = host_to_target_uuid(target_addr +
+		    (abi_ulong)(sizeof(struct target_uuid) * i), &host_uuid[i]);
+		if (ret)
+			goto out;
+	}
+
+out:
+	g_free(host_uuid);
 	return (ret);
 }
 
@@ -6244,6 +6294,10 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 	ret = get_errno(reboot(arg1));
 	break;
 
+    case TARGET_FREEBSD_NR_uuidgen:
+	ret = do_uuidgen(arg1, arg2);
+	break;
+
     case TARGET_FREEBSD_NR_yield:
     case TARGET_FREEBSD_NR_sched_setparam:
     case TARGET_FREEBSD_NR_sched_getparam:
@@ -6330,8 +6384,6 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
     case TARGET_FREEBSD_NR_cap_getmode:
 	ret = unimplemented(num);
 	break;
-
-    case TARGET_FREEBSD_NR_uuidgen:
 
     case TARGET_FREEBSD_NR___mac_get_proc:
     case TARGET_FREEBSD_NR___mac_set_proc:

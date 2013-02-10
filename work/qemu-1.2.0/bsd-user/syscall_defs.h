@@ -700,3 +700,19 @@ struct target_fhandle {
 };
 typedef struct target_fhandle target_fhandle_t;
 
+
+/*
+ * uuidgen.  From sys/uuid.h.
+ */
+
+#define TARGET_UUID_NODE_LEN	6
+
+struct target_uuid {
+	uint32_t	time_low;
+	uint16_t	time_mid;
+	uint16_t	time_hi_and_version;
+	uint8_t		clock_seq_hi_and_reserved;
+	uint8_t		clock_seq_low;
+	uint8_t		node[TARGET_UUID_NODE_LEN];
+};
+
