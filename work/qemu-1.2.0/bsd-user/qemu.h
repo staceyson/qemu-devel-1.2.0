@@ -23,6 +23,7 @@ extern enum BSDType bsd_type;
 abi_long memcpy_to_target(abi_ulong dest, const void *src,
                           unsigned long len);
 
+#include "thunk.h"
 #include "syscall_defs.h"
 #include "syscall.h"
 #include "target_vmparam.h"
