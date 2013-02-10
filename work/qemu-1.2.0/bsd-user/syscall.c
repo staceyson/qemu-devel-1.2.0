@@ -6298,6 +6298,13 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 	ret = do_uuidgen(arg1, arg2);
 	break;
 
+    case TARGET_FREEBSD_NR_mincore:
+        if (!(p = lock_user(VERIFY_WRITE, arg3, arg2, 0)))
+            goto efault;
+	ret = get_errno(mincore(g2h(arg1), arg2, p));
+        unlock_user(p, arg3, ret);
+	break;
+
     case TARGET_FREEBSD_NR_yield:
     case TARGET_FREEBSD_NR_sched_setparam:
     case TARGET_FREEBSD_NR_sched_getparam:
@@ -6354,8 +6361,6 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 #ifdef TARGET_FREEBSD_NR_sethostname
     case TARGET_FREEBSD_NR_sethostname:
 #endif
-
-    case TARGET_FREEBSD_NR_mincore:
 
     case TARGET_FREEBSD_NR_vadvise:
 
