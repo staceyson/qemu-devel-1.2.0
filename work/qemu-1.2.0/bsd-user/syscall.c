@@ -49,6 +49,8 @@
 #include <sys/umtx.h>
 #include <sys/_termios.h>
 #include <sys/ttycom.h>
+#include <sys/reboot.h>
+#include <kenv.h>
 #include <pthread.h>
 #include <machine/atomic.h>
 #endif
@@ -5251,6 +5253,10 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 	 ret = do_socketpair(arg1, arg2, arg3, arg4);
 	 break;
 
+    case TARGET_FREEBSD_NR_shutdown:
+	ret = get_errno(shutdown(arg1, arg2));
+	break;
+
     case TARGET_FREEBSD_NR_getpriority:
 	 /*
 	  * Note that negative values are valid for getpriority, so we must
@@ -6199,6 +6205,38 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 	ret = do_ioctl(arg1, arg2, arg3);
 	break;
 
+    case TARGET_FREEBSD_NR_kenv:
+	{
+		char *n, *v;
+
+		if (!(n = lock_user_string(arg2)))
+			goto efault;
+		if (!(v = lock_user_string(arg3)))
+			goto efault;
+		ret = get_errno(kenv(arg1, n, v, arg4));
+		unlock_user(v, arg3, 0);
+		unlock_user(n, arg2, 0);
+	}
+	break;
+
+    case TARGET_FREEBSD_NR_swapon:
+	if (!(p = lock_user_string(arg1)))
+		goto efault;
+	ret = get_errno(swapon(path(p)));
+	unlock_user(p, arg1, 0);
+	break;
+
+    case TARGET_FREEBSD_NR_swapoff:
+	if (!(p = lock_user_string(arg1)))
+		goto efault;
+	ret = get_errno(swapoff(path(p)));
+	unlock_user(p, arg1, 0);
+	break;
+
+    case TARGET_FREEBSD_NR_reboot:
+	ret = get_errno(reboot(arg1));
+	break;
+
     case TARGET_FREEBSD_NR_yield:
     case TARGET_FREEBSD_NR_sched_setparam:
     case TARGET_FREEBSD_NR_sched_getparam:
@@ -6208,12 +6246,6 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
     case TARGET_FREEBSD_NR_sched_get_priority_max:
     case TARGET_FREEBSD_NR_sched_get_priority_min:
     case TARGET_FREEBSD_NR_sched_rr_get_interval:
-
-    case TARGET_FREEBSD_NR_reboot:
-    case TARGET_FREEBSD_NR_shutdown:
-
-    case TARGET_FREEBSD_NR_swapon:
-    case TARGET_FREEBSD_NR_swapoff:
 
     case TARGET_FREEBSD_NR_cpuset:
     case TARGET_FREEBSD_NR_cpuset_getid:
@@ -6294,7 +6326,6 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 	ret = unimplemented(num);
 	break;
 
-    case TARGET_FREEBSD_NR_kenv:
     case TARGET_FREEBSD_NR_uuidgen:
 
     case TARGET_FREEBSD_NR___mac_get_proc:
