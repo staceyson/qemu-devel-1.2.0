@@ -51,6 +51,7 @@
 #include <sys/_termios.h>
 #include <sys/ttycom.h>
 #include <sys/reboot.h>
+#include <sys/timex.h>
 #include <kenv.h>
 #include <pthread.h>
 #include <machine/atomic.h>
@@ -800,7 +801,7 @@ host_to_target_waitstatus(int status)
 }
 
 static inline abi_long
-copy_from_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
+target_to_host_timeval(struct timeval *tv, abi_ulong target_tv_addr)
 {
      struct target_freebsd_timeval *target_tv;
 
@@ -810,6 +811,33 @@ copy_from_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
    __get_user(tv->tv_usec, &target_tv->tv_usec);
      unlock_user_struct(target_tv, target_tv_addr, 1);
      return (0);
+}
+
+static inline abi_long
+target_to_host_timex(struct timex *host_tx, abi_ulong target_tx_addr)
+{
+	struct target_timex *target_tx;
+
+	if (!lock_user_struct(VERIFY_READ, target_tx, target_tx_addr, 0))
+		return (-TARGET_EFAULT);
+	__get_user(host_tx->modes, &target_tx->modes);
+	__get_user(host_tx->offset, &target_tx->offset);
+	__get_user(host_tx->freq, &target_tx->freq);
+	__get_user(host_tx->maxerror, &target_tx->maxerror);
+	__get_user(host_tx->esterror, &target_tx->esterror);
+	__get_user(host_tx->status, &target_tx->status);
+	__get_user(host_tx->constant, &target_tx->constant);
+	__get_user(host_tx->precision, &target_tx->precision);
+	__get_user(host_tx->ppsfreq, &target_tx->ppsfreq);
+	__get_user(host_tx->jitter, &target_tx->jitter);
+	__get_user(host_tx->shift, &target_tx->shift);
+	__get_user(host_tx->stabil, &target_tx->stabil);
+	__get_user(host_tx->jitcnt, &target_tx->jitcnt);
+	__get_user(host_tx->calcnt, &target_tx->calcnt);
+	__get_user(host_tx->errcnt, &target_tx->errcnt);
+	__get_user(host_tx->stbcnt, &target_tx->stbcnt);
+	unlock_user_struct(target_tx, target_tx_addr, 1);
+	return (0);
 }
 
 static inline abi_long
@@ -826,7 +854,7 @@ target_to_host_timespec(struct timespec *ts, abi_ulong target_ts_addr)
 }
 
 static inline abi_long
-fbsd_copy_to_user_timeval(struct timeval *tv, abi_ulong target_tv_addr)
+host_to_target_timeval(struct timeval *tv, abi_ulong target_tv_addr)
 {
      struct target_freebsd_timeval *target_tv;
 
@@ -850,6 +878,23 @@ host_to_target_timespec(abi_ulong target_ts_addr, struct timespec *ts)
      unlock_user_struct(target_ts, target_ts_addr, 1);
      return (0);
 }
+
+static inline abi_long
+host_to_target_ntptimeval(abi_ulong target_ntv_addr, struct ntptimeval *ntv)
+{
+	struct target_ntptimeval *target_ntv;
+
+	if (!lock_user_struct(VERIFY_WRITE, target_ntv, target_ntv_addr, 0))
+		return (-TARGET_EFAULT);
+	__put_user(ntv->time.tv_sec, &target_ntv->time.tv_sec);
+	__put_user(ntv->time.tv_nsec, &target_ntv->time.tv_nsec);
+	__put_user(ntv->maxerror, &target_ntv->maxerror);
+	__put_user(ntv->esterror, &target_ntv->esterror);
+	__put_user(ntv->tai, &target_ntv->tai);
+	__put_user(ntv->time_state, &target_ntv->time_state);
+	return (0);
+}
+
 static inline abi_ulong
 copy_from_user_fdset(fd_set *fds, abi_ulong target_fds_addr, int n)
 {
@@ -1260,7 +1305,7 @@ do_freebsd_select(int n, abi_ulong rfd_addr, abi_ulong wfd_addr,
 		return (ret);
 
 	if (target_tv_addr) {
-		if (copy_from_user_timeval(&tv, target_tv_addr))
+		if (target_to_host_timeval(&tv, target_tv_addr))
 			return (-TARGET_EFAULT);
 		tv_ptr = &tv;
 	} else {
@@ -1278,7 +1323,7 @@ do_freebsd_select(int n, abi_ulong rfd_addr, abi_ulong wfd_addr,
 			return (-TARGET_EFAULT);
 
 		if (target_tv_addr &&
-		    fbsd_copy_to_user_timeval(&tv, target_tv_addr))
+		    host_to_target_timeval(&tv, target_tv_addr))
 			return (-TARGET_EFAULT);
 	}
 
@@ -3427,6 +3472,59 @@ out:
 	return (ret);
 }
 
+static abi_long
+do_adjtime(abi_ulong target_delta_addr, abi_ulong target_old_addr)
+{
+	abi_long ret;
+	struct timeval host_delta, host_old;
+
+	ret = target_to_host_timeval(&host_delta, target_delta_addr);
+	if (ret)
+		goto out;
+
+	if (target_old_addr) {
+		ret = get_errno(adjtime(&host_delta, &host_old));
+		if (ret)
+			goto out;
+		ret = host_to_target_timeval(&host_old, target_old_addr);
+	} else
+		ret = get_errno(adjtime(&host_delta, NULL));
+
+out:
+	return (ret);
+}
+
+static abi_long
+do_ntp_adjtime(abi_ulong target_tx_addr)
+{
+	abi_long ret;
+	struct timex host_tx;
+
+	ret = target_to_host_timex(&host_tx, target_tx_addr);
+	if (ret)
+		goto out;
+
+	ret = get_errno(ntp_adjtime(&host_tx));
+
+out:
+	return (ret);
+}
+
+static abi_long
+do_ntp_gettime(abi_ulong target_ntv_addr)
+{
+	abi_long ret;
+	struct ntptimeval host_ntv;
+
+	ret = get_errno(ntp_gettime(&host_ntv));
+	if (ret)
+		goto out;
+
+	ret = host_to_target_ntptimeval(target_ntv_addr, &host_ntv);
+out:
+	return (ret);
+}
+
 /*
  * ioctl()
  */
@@ -4131,7 +4229,7 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 		}
 		ret = get_errno(gettimeofday(&tv, arg2 != 0 ? &tz : NULL));
 		if (!is_error(ret)) {
-			if (fbsd_copy_to_user_timeval(&tv, arg1))
+			if (host_to_target_timeval(&tv, arg1))
 				goto efault;
 		}
 	}
@@ -4150,7 +4248,7 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 			__get_user(tz.tz_dsttime, &target_tz->tz_dsttime);
 			unlock_user_struct(target_tz, arg2, 1);
 		}
-		if (copy_from_user_timeval(&tv, arg1))
+		if (target_to_host_timeval(&tv, arg1))
 			goto efault;
 		ret = get_errno(settimeofday(&tv, arg2 != 0 ? & tz : NULL));
 	}
@@ -4441,8 +4539,8 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 
 		if (arg2) {
 			pvalue = &value;
-			if (copy_from_user_timeval(&pvalue->it_interval,
-				arg2) || copy_from_user_timeval(
+			if (target_to_host_timeval(&pvalue->it_interval,
+				arg2) || target_to_host_timeval(
 				&pvalue->it_value, arg2 +
 				sizeof(struct target_timeval)))
 				goto efault;
@@ -4451,8 +4549,8 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 		}
 		ret = get_errno(setitimer(arg1, pvalue, &ovalue));
 		if (!is_error(ret) && arg3) {
-			if (fbsd_copy_to_user_timeval(&ovalue.it_interval, arg3)
-			    || fbsd_copy_to_user_timeval(&ovalue.it_value,
+			if (host_to_target_timeval(&ovalue.it_interval, arg3)
+			    || host_to_target_timeval(&ovalue.it_value,
 				arg3 + sizeof(struct target_timeval)))
 				goto efault;
 		}
@@ -4465,8 +4563,8 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 
 		ret = get_errno(getitimer(arg1, &value));
 		if (!is_error(ret) && arg2) {
-			if (fbsd_copy_to_user_timeval(&value.it_interval, arg2)
-			    || fbsd_copy_to_user_timeval(&value.it_value,
+			if (host_to_target_timeval(&value.it_interval, arg2)
+			    || host_to_target_timeval(&value.it_value,
 				arg2 + sizeof(struct target_timeval)))
 				goto efault;
 		}
@@ -4478,8 +4576,8 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 		struct timeval *tvp, tv[2];
 
 		if (arg2) {
-			if (copy_from_user_timeval(&tv[0], arg2)
-			    || copy_from_user_timeval(&tv[1],
+			if (target_to_host_timeval(&tv[0], arg2)
+			    || target_to_host_timeval(&tv[1],
 				arg2 + sizeof(struct target_timeval)))
 
 				goto efault;
@@ -4499,8 +4597,8 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 		struct timeval *tvp, tv[2];
 
 		if (arg2) {
-			if (copy_from_user_timeval(&tv[0], arg2)
-			    || copy_from_user_timeval(&tv[1],
+			if (target_to_host_timeval(&tv[0], arg2)
+			    || target_to_host_timeval(&tv[1],
 				arg2 + sizeof(struct target_timeval)))
 
 				goto efault;
@@ -4520,8 +4618,8 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 		struct timeval *tvp, tv[2];
 
 		if (arg2) {
-			if (copy_from_user_timeval(&tv[0], arg2)
-			    || copy_from_user_timeval(&tv[1],
+			if (target_to_host_timeval(&tv[0], arg2)
+			    || target_to_host_timeval(&tv[1],
 				arg2 + sizeof(struct target_timeval)))
 				goto efault;
 			tvp = tv;
@@ -4537,8 +4635,8 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 		struct timeval *tvp, tv[2];
 
 		if (arg3) {
-			if (copy_from_user_timeval(&tv[0], arg3)
-			    || copy_from_user_timeval(&tv[1],
+			if (target_to_host_timeval(&tv[0], arg3)
+			    || target_to_host_timeval(&tv[1],
 				arg3 + sizeof(struct target_timeval)))
 				goto efault;
 			tvp = tv;
@@ -6305,6 +6403,18 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
         unlock_user(p, arg3, ret);
 	break;
 
+    case TARGET_FREEBSD_NR_adjtime:
+	ret = do_adjtime(arg1, arg2);
+	break;
+
+    case TARGET_FREEBSD_NR_ntp_adjtime:
+	ret = do_ntp_adjtime(arg1);
+	break;
+
+    case TARGET_FREEBSD_NR_ntp_gettime:
+	ret = do_ntp_gettime(arg1);
+	break;
+
     case TARGET_FREEBSD_NR_yield:
     case TARGET_FREEBSD_NR_sched_setparam:
     case TARGET_FREEBSD_NR_sched_getparam:
@@ -6327,9 +6437,6 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
     case TARGET_FREEBSD_NR_rctl_remove_rule:
     case TARGET_FREEBSD_NR_rctl_get_limits:
 
-    case TARGET_FREEBSD_NR_ntp_adjtime:
-    case TARGET_FREEBSD_NR_ntp_gettime:
-
     case TARGET_FREEBSD_NR_sctp_peeloff:
     case TARGET_FREEBSD_NR_sctp_generic_sendmsg:
     case TARGET_FREEBSD_NR_sctp_generic_recvmsg:
@@ -6349,8 +6456,6 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 #ifdef TARGET_FREEBSD_NR_quota
     case TARGET_FREEBSD_NR_quota:
 #endif
-
-    case TARGET_FREEBSD_NR_adjtime:
 
 #ifdef TARGET_FREEBSD_NR_gethostid
     case TARGET_FREEBSD_NR_gethostid:

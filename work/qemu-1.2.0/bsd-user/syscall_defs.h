@@ -716,3 +716,35 @@ struct target_uuid {
 	uint8_t		node[TARGET_UUID_NODE_LEN];
 };
 
+/*
+ * ntp.  From sys/timex.h.
+ */
+
+struct target_ntptimeval {
+	struct target_freebsd_timespec	time;
+	abi_long	maxerror;
+	abi_long	esterror;
+	abi_long	tai;
+	int32_t		time_state;
+};
+
+struct target_timex {
+	uint32_t	modes;
+	abi_long	offset;
+	abi_long	freq;
+	abi_long	maxerror;
+	abi_long	esterror;
+	int32_t		status;
+	abi_long	constant;
+	abi_long	precision;
+	abi_long	tolerance;
+
+	abi_long	ppsfreq;
+	abi_long	jitter;
+	int32_t		shift;
+	abi_long	stabil;
+	abi_long	jitcnt;
+	abi_long	calcnt;
+	abi_long	errcnt;
+	abi_long	stbcnt;
+};
