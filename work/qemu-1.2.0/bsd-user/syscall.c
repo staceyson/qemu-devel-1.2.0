@@ -3255,6 +3255,82 @@ host_to_target_fhandle(abi_ulong target_addr, fhandle_t *host_fh)
 }
 
 static inline abi_long
+target_to_host_sched_param(struct sched_param *host_sp, abi_ulong target_addr)
+{
+	struct target_sched_param *target_sp;
+
+	if (!lock_user_struct(VERIFY_READ, target_sp, target_addr, 1))
+		return (-TARGET_EFAULT);
+	__get_user(host_sp->sched_priority, &target_sp->sched_priority);
+	unlock_user_struct(target_sp, target_addr, 0);
+	return (0);
+}
+
+static inline abi_long
+host_to_target_sched_param(abi_ulong target_addr, struct sched_param *host_sp)
+{
+	struct target_sched_param *target_sp;
+
+	if (!lock_user_struct(VERIFY_WRITE, target_sp, target_addr, 0))
+		return (-TARGET_EFAULT);
+	__put_user(host_sp->sched_priority, &target_sp->sched_priority);
+	unlock_user_struct(target_sp, target_addr, 1);
+	return (0);
+}
+
+static inline abi_long
+do_sched_setparam(pid_t pid, abi_ulong target_sp_addr)
+{
+	int ret;
+	struct sched_param host_sp;
+
+	ret = target_to_host_sched_param(&host_sp, target_sp_addr);
+	if (0 == ret)
+		ret = get_errno(sched_setparam(pid, &host_sp));
+
+	return (ret);
+}
+
+static inline abi_long
+do_sched_getparam(pid_t pid, abi_ulong target_sp_addr)
+{
+	int ret;
+	struct sched_param host_sp;
+
+	ret = get_errno(sched_getparam(pid, &host_sp));
+	if (0 == ret)
+		ret = host_to_target_sched_param(target_sp_addr, &host_sp);
+
+	return (ret);
+}
+
+static inline abi_long
+do_sched_setscheduler(pid_t pid, int policy, abi_ulong target_sp_addr)
+{
+	int ret;
+	struct sched_param host_sp;
+
+	ret = target_to_host_sched_param(&host_sp, target_sp_addr);
+	if (0 == ret)
+		ret = get_errno(sched_setscheduler(pid, policy, &host_sp));
+
+	return (ret);
+}
+
+static inline abi_long
+do_sched_rr_get_interval(pid_t pid, abi_ulong target_ts_addr)
+{
+	int ret;
+	struct timespec host_ts;
+
+	ret = get_errno(sched_rr_get_interval(pid, &host_ts));
+	if (0 == ret)
+		ret = host_to_target_timespec(target_ts_addr, &host_ts);
+
+	return (ret);
+}
+
+static inline abi_long
 host_to_target_uuid(abi_ulong target_addr, struct uuid *host_uuid)
 {
 	struct target_uuid *target_uuid;
@@ -5553,8 +5629,31 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 	 break;
 
     case TARGET_FREEBSD_NR_getresuid:
+	 {
+		 uid_t ruid, euid, suid;
+
+		 ret = get_errno(getresuid(&ruid, &euid, &suid));
+		 if (put_user_s32(ruid, arg1))
+			 goto efault;
+		 if (put_user_s32(euid, arg2))
+			 goto efault;
+		 if (put_user_s32(suid, arg3))
+			 goto efault;
+	 }
+	 break;
+
     case TARGET_FREEBSD_NR_getresgid:
-	 ret = unimplemented(num);
+	 {
+		gid_t rgid, egid, sgid;
+
+		ret = get_errno(getresgid(&rgid, &egid, &sgid));
+		if (put_user_s32(rgid, arg1))
+			goto efault;
+		if (put_user_s32(egid, arg2))
+			goto efault;
+		if (put_user_s32(sgid, arg3))
+			goto efault;
+	 }
 	 break;
 
     case TARGET_FREEBSD_NR_setsid:
@@ -6415,15 +6514,50 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 	ret = do_ntp_gettime(arg1);
 	break;
 
+    case TARGET_FREEBSD_NR_vadvise:
+	ret = -TARGET_EINVAL;	/* See sys_ovadvise() in vm_unix.c */
+	break;
+
+    case TARGET_FREEBSD_NR_sbrk:
+	ret = -TARGET_EOPNOTSUPP; /* see sys_sbrk() in vm_mmap.c */
+	break;
+
+    case TARGET_FREEBSD_NR_sstk:
+	ret = -TARGET_EOPNOTSUPP; /* see sys_sstk() in vm_mmap.c */
+	break;
+
     case TARGET_FREEBSD_NR_yield:
-    case TARGET_FREEBSD_NR_sched_setparam:
-    case TARGET_FREEBSD_NR_sched_getparam:
-    case TARGET_FREEBSD_NR_sched_setscheduler:
-    case TARGET_FREEBSD_NR_sched_getscheduler:
     case TARGET_FREEBSD_NR_sched_yield:
+	ret = get_errno(sched_yield());
+	break;
+
+    case TARGET_FREEBSD_NR_sched_setparam:
+	ret = do_sched_setparam(arg1, arg2);
+	break;
+
+    case TARGET_FREEBSD_NR_sched_getparam:
+	ret = do_sched_getparam(arg1, arg2);
+	break;
+
+    case TARGET_FREEBSD_NR_sched_setscheduler:
+	ret = do_sched_setscheduler(arg1, arg2, arg3);
+	break;
+
+    case TARGET_FREEBSD_NR_sched_getscheduler:
+	ret = get_errno(sched_getscheduler(arg1));
+	break;
+
     case TARGET_FREEBSD_NR_sched_get_priority_max:
+	ret = get_errno(sched_get_priority_max(arg1));
+	break;
+
     case TARGET_FREEBSD_NR_sched_get_priority_min:
+	ret = get_errno(sched_get_priority_min(arg1));
+	break;
+
     case TARGET_FREEBSD_NR_sched_rr_get_interval:
+	ret = do_sched_rr_get_interval(arg1, arg2);
+	break;
 
     case TARGET_FREEBSD_NR_cpuset:
     case TARGET_FREEBSD_NR_cpuset_getid:
@@ -6466,11 +6600,6 @@ abi_long do_freebsd_syscall(void *cpu_env, int num, abi_long arg1,
 #ifdef TARGET_FREEBSD_NR_sethostname
     case TARGET_FREEBSD_NR_sethostname:
 #endif
-
-    case TARGET_FREEBSD_NR_vadvise:
-
-    case TARGET_FREEBSD_NR_sbrk:
-    case TARGET_FREEBSD_NR_sstk:
 
 #ifdef TARGET_FREEBSD_NR_getkerninfo
     case TARGET_FREEBSD_NR_getkerninfo:

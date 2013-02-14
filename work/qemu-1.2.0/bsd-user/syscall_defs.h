@@ -748,3 +748,11 @@ struct target_timex {
 	abi_long	errcnt;
 	abi_long	stbcnt;
 };
+
+/*
+ * sched.h  From sched.h
+ */
+
+struct target_sched_param {
+	int32_t	sched_priority;
+};
